@@ -117,6 +117,8 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 #lock .box{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:28px 24px;width:min(360px,100%);text-align:center}
 #lock h2{font-size:20px;margin:6px 0 4px}
 #lock input{text-align:center;font-size:24px;letter-spacing:.4em;margin:18px 0 10px}
+#lock input::placeholder{letter-spacing:0;font-size:16px}
+#whoBadge{font-size:12px;padding:3px 8px;border-radius:99px;background:var(--brand-soft);color:var(--brand);white-space:nowrap}
 #lock .err{color:var(--bad);min-height:20px;font-size:13px}
 #lock.shake .box{animation:shake .35s}
 @keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
@@ -139,8 +141,9 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
 <div id="lock"><form class="box" onsubmit="unlock(event)">
   <div style="font-size:40px">🍞</div>
   <h2>브레드이발소 재고관리</h2>
-  <div class="small muted">관리 비밀번호를 입력하세요</div>
-  <input id="lockPw" type="password" inputmode="numeric" autocomplete="off" maxlength="12" autofocus>
+  <div class="small muted">이름과 관리 비밀번호를 입력하세요</div>
+  <input id="lockName" type="text" placeholder="이름 (예: 남상우)" autocomplete="off" maxlength="20" style="letter-spacing:0;font-size:18px;margin:18px 0 0">
+  <input id="lockPw" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="비밀번호" style="margin-top:8px">
   <div class="err" id="lockErr"></div>
   <button class="btn primary big" type="submit">입장</button>
 </form></div>
@@ -149,7 +152,8 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
   <span id="scanDot" title="USB 바코드 스캐너로 찍으면 현재 탭에 바로 반영됩니다">▮▯▮ 스캐너 대기</span>
   <button class="btn sm" onclick="openCam()">📷 카메라 스캔</button>
   <span id="modeBadge" class="badge">연결 확인 중</span>
-  <button class="btn sm" onclick="lockNow()" title="화면 잠금">🔒 잠금</button>
+  <span id="whoBadge"></span>
+  <button class="btn sm" onclick="lockNow()" title="화면 잠금 / 담당자 변경">🔒 잠금</button>
   <button class="btn sm" onclick="refresh()">새로고침</button>
 </header>
 
@@ -274,7 +278,7 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
       <label class="small muted" style="display:block;margin-top:8px">PIN</label>
       <input id="cfgPin" type="password" placeholder="관리 비밀번호 (입장할 때 입력한 값이 자동으로 쓰입니다)" disabled>
       <label class="small muted" style="display:block;margin-top:8px">담당자 이름</label>
-      <input id="cfgStaff" type="text" placeholder="예: 김난희">
+      <input id="cfgStaff" type="text" disabled placeholder="입장할 때 입력한 이름이 쓰입니다 (변경: 🔒 잠금)">
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="saveCfg()">저장하고 연결</button>
         <button class="btn" onclick="testConn()">연결 테스트</button>
@@ -791,7 +795,7 @@ document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('camModal').c
 /* ============ 설정 / 탭 ============ */
 function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin ? '••••' : ''; $('cfgStaff').value=cfg.staff; }
 function saveCfg(){
-  cfg = {url:$('cfgUrl').value.trim(), pin:cfg.pin, staff:$('cfgStaff').value.trim()};
+  cfg = {url:$('cfgUrl').value.trim(), pin:cfg.pin, staff:cfg.staff};
   LS.set('cfg', {...cfg, pin:''}); toast('저장했습니다'); refresh();
 }
 async function testConn(){
@@ -829,7 +833,8 @@ document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
   window.scrollTo(0,0);
 });
 
-/* ============ 입장 비밀번호 ============ */
+/* ============ 입장 (이름 + 비밀번호) ============ */
+$('lockName').addEventListener('keydown', e=>{ if(e.key==='Enter' && !$('lockPw').value){ e.preventDefault(); $('lockPw').focus(); } });
 const LOCK_HASH = 'd54123de468bd42ea00dafbd777f85fe5fa1ff6404d9838c007953c25c92a1c5';  // 비밀번호의 SHA-256 (평문을 코드에 두지 않음)
 async function sha256(t){
   if(window.crypto && crypto.subtle){
@@ -841,6 +846,8 @@ async function sha256(t){
 async function unlock(e){
   e && e.preventDefault();
   const pw = $('lockPw').value.trim();
+  const name = $('lockName').value.trim();
+  if(!name){ $('lockErr').textContent = '이름을 입력해 주세요'; $('lockName').focus(); return; }
   const h = await sha256(pw);
   if(h !== LOCK_HASH){
     $('lockErr').textContent = '비밀번호가 맞지 않습니다';
@@ -848,23 +855,27 @@ async function unlock(e){
     $('lockPw').value=''; $('lockPw').focus(); return;
   }
   // 입장 비밀번호 = 구글 시트 웹앱 PIN
-  cfg.pin = pw; LS.set('cfg', {...cfg, pin:''});
-  try{ sessionStorage.setItem('bb_pin', pw); }catch(_){}
+  cfg.pin = pw; cfg.staff = name; LS.set('cfg', {...cfg, pin:''});
+  try{ sessionStorage.setItem('bb_pin', pw); sessionStorage.setItem('bb_name', name); }catch(_){}
+  $('whoBadge').textContent = '👤 ' + name;
   $('lock').classList.add('off'); document.body.classList.remove('locked');
   $('lockErr').textContent=''; $('lockPw').value='';
   fillCfg(); refresh();
 }
 function lockNow(){
   cart = {}; renderCart();
-  cfg.pin = ''; try{ sessionStorage.removeItem('bb_pin'); }catch(_){}
+  cfg.pin = ''; try{ sessionStorage.removeItem('bb_pin'); sessionStorage.removeItem('bb_name'); }catch(_){}
+  $('lockName').value = cfg.staff || '';
   document.body.classList.add('locked'); $('lock').classList.remove('off');
-  setTimeout(()=>$('lockPw').focus(), 50);
+  setTimeout(()=>($('lockName').value ? $('lockPw') : $('lockName')).focus(), 50);
 }
 
 // 같은 탭에서 새로고침한 경우에만 다시 묻지 않음 (창을 새로 열면 항상 비밀번호 입력)
 let savedPin = null; try{ savedPin = sessionStorage.getItem('bb_pin'); }catch(_){}
-if(savedPin){ $('lockPw').value = savedPin; unlock(); }
-else setTimeout(()=>$('lockPw').focus(), 50);
+let savedName = null; try{ savedName = sessionStorage.getItem('bb_name'); }catch(_){}
+$('lockName').value = savedName || cfg.staff || '';   // 지난번 이름을 미리 채워 둠
+if(savedPin && savedName){ $('lockPw').value = savedPin; unlock(); }
+else setTimeout(()=>($('lockName').value ? $('lockPw') : $('lockName')).focus(), 50);
 </script>
 </body>
 </html>
