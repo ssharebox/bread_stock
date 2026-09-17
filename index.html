@@ -314,8 +314,10 @@ const LS = {
   set(k, v){ try{ localStorage.setItem('bb_'+k, JSON.stringify(v)); }catch(e){} },
   del(k){ try{ localStorage.removeItem('bb_'+k); }catch(e){} }
 };
-const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx5X3qqoJglYrw9bAfoDdu6pW_E_CyFLg1DjZvS_1yeOgUnvYNTLC4ZFheYGSMymifH/exec';
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbzP4nFRB0muIG-QVx4NL4KXebMiz6OdwcQbAf_26lQP_8L2Ub9IhT83MYIxUFLlGmKvNQ/exec';
+const OLD_URLS = ['https://script.google.com/macros/s/AKfycbx5X3qqoJglYrw9bAfoDdu6pW_E_CyFLg1DjZvS_1yeOgUnvYNTLC4ZFheYGSMymifH/exec'];
 let cfg = LS.get('cfg', null) || {url:DEFAULT_URL, pin:'', staff:''};
+if(OLD_URLS.includes(cfg.url)){ cfg.url = DEFAULT_URL; LS.set('cfg', {...cfg, pin:''}); }  // 예전 웹앱 주소는 자동으로 새 주소로 교체
 const isDemo = () => !cfg.url;
 
 const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
@@ -352,7 +354,13 @@ async function api(action, data={}){
     if(res.products) state.products = res.products;
     return res;
   }catch(e){
-    if(/PIN/.test(e.message)) e.message = '구글 시트 쪽 비밀번호가 다릅니다 → Apps Script 프로젝트 설정 > 스크립트 속성 PIN 값을 1998로 바꿔 주세요';
+    if(/PIN/.test(e.message)){
+      let v = '';
+      try{ const g = await (await fetch(cfg.url)).json(); v = g.version || ''; }catch(_){}
+      e.message = (v && v >= 'v6')
+        ? '비밀번호가 틀렸습니다 (Code.gs의 PIN 값과 입장 비밀번호가 다릅니다)'
+        : `웹앱이 아직 예전 코드${v?'('+v+')':''}로 돌고 있습니다 → Apps Script에서 새 Code.gs 저장 후 [배포 → 새 배포]로 웹앱을 다시 만들고, 새 주소를 설정 탭 URL에 넣어 주세요`;
+    }
     const msg = e.name === 'AbortError' ? '응답이 30초 넘게 없습니다 (웹앱 주소·배포 상태 확인)'
       : e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 → 배포 액세스가 “모든 사용자”인지, 주소가 /exec 로 끝나는지 확인하세요'
       : e.message;
