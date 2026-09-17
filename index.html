@@ -272,7 +272,8 @@ const LS = {
   set(k, v){ try{ localStorage.setItem('bb_'+k, JSON.stringify(v)); }catch(e){} },
   del(k){ try{ localStorage.removeItem('bb_'+k); }catch(e){} }
 };
-let cfg = LS.get('cfg', {url:'', pin:'', staff:''});
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbx5X3qqoJglYrw9bAfoDdu6pW_E_CyFLg1DjZvS_1yeOgUnvYNTLC4ZFheYGSMymifH/exec';
+let cfg = LS.get('cfg', null) || {url:DEFAULT_URL, pin:'', staff:''};
 const isDemo = () => !cfg.url;
 
 const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
@@ -363,7 +364,7 @@ const Demo = {
           b.products.forEach(x=>{ const p=m[x.code];
             if(p){ if(+x.stock!==p.stock) this.tx({type:'조정',code:p.code,name:p.name,qty:+x.stock-p.stock,price:p.price,amount:0,staff:b.staff,memo:'엑셀 일괄 반영'});
               p.stock=+x.stock; if(x.price!=null) p.price=+x.price; updated++; }
-            else { this.db.products.push({code:x.code,barcode:x.barcode||'',name:x.name,price:+x.price||0,stock:+x.stock||0,actual:null,countedAt:'',safety:null,memo:''}); added++; } });
+            else { this.db.products.push({code:x.code,barcode:x.barcode||'',name:x.name,price:+x.price||0,stock:+x.stock||0,actual:null,countedAt:'',safety:null,memo:x.memo||''}); added++; } });
           return out({added,updated}); }
         case 'report': return out(Object.assign(summarize(this.db.tx.filter(t=>t.date===b.date), this.db.products, b.date), {archived:false}));
         case 'exportNow': return out({exported:b.date, demo:true});
@@ -428,7 +429,9 @@ $('saleSearch').addEventListener('input', renderSaleGrid);
 $('saleSearch').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
   const q = e.target.value.trim();
-  const exact = state.products.find(p=>p.barcode===q || p.code===q);
+  const exacts = state.products.filter(p=>p.barcode===q || p.code===q);
+  if(exacts.length>1){ toast('같은 바코드 상품이 여러 개예요. 목록에서 직접 눌러 주세요', true); return; }
+  const exact = exacts[0];
   const list = state.products.filter(p=>matches(p,q));
   const hit = exact || (list.length===1 ? list[0] : null);
   if(hit){ addCart(hit.code); e.target.value=''; renderSaleGrid(); }
@@ -557,12 +560,12 @@ $('xlsFile').addEventListener('change', async e=>{
     if(hi<0) throw new Error('헤더(코드/코드명)를 찾지 못했습니다');
     const h = rows[hi].map(c=>String(c).trim());
     const ci = {code:h.indexOf('코드'), name:h.findIndex(c=>/코드명|상품명/.test(c)),
-      qty:h.findIndex(c=>/^수량/.test(c)), price:h.findIndex(c=>/현재가$|판매가/.test(c)), barcode:h.findIndex(c=>/Maker|바코드/.test(c))};
+      qty:h.findIndex(c=>/^수량|전산재고/.test(c)), memo:h.findIndex(c=>/^메모|^비고/.test(c)), price:h.findIndex(c=>/현재가$|판매가/.test(c)), barcode:h.findIndex(c=>/Maker|바코드/.test(c))};
     const n = v => Number(String(v).replace(/,/g,'')) || 0;
     pendingImport = rows.slice(hi+1)
       .filter(r=>r[ci.code] && !/^(코드|합계)$/.test(String(r[ci.code]).trim()))
       .map(r=>({code:String(r[ci.code]).trim(), name:String(r[ci.name]).trim(), stock:n(r[ci.qty]),
-        price: ci.price>=0 ? n(r[ci.price]) : null, barcode: ci.barcode>=0 ? String(r[ci.barcode]).trim() : ''}));
+        price: ci.price>=0 ? n(r[ci.price]) : null, barcode: ci.barcode>=0 ? String(r[ci.barcode]).trim() : '', memo: ci.memo>=0 ? String(r[ci.memo]).trim() : ''}));
     const m = {}; state.products.forEach(p=>m[p.code]=p);
     const changed = pendingImport.filter(x=>m[x.code] && m[x.code].stock!==x.stock);
     const added = pendingImport.filter(x=>!m[x.code]);
