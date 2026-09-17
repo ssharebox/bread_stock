@@ -24,6 +24,7 @@
   }
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,sans-serif;font-size:15px;
   padding-bottom:calc(76px + env(safe-area-inset-bottom))}
@@ -123,6 +124,41 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 #lock.shake .box{animation:shake .35s}
 @keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
 body.locked main,body.locked nav,body.locked header{visibility:hidden}
+
+/* 헤더 */
+.hstat,.hact{display:flex;align-items:center;gap:8px}
+@media (max-width:760px){
+  header{flex-wrap:wrap;padding:8px 12px;gap:6px 8px;top:env(safe-area-inset-top,0px)}
+  header h1{flex:1 1 auto;font-size:16px;white-space:nowrap;order:1}
+  .hact{order:2;gap:4px;margin-left:auto}
+  .hact .lbl{display:none}
+  .hact .btn.sm{padding:6px 7px;font-size:14px;line-height:1.2}
+  header h1{font-size:15px}
+  #scanDot{display:none}
+  .hstat{order:3;flex:1 1 100%;overflow-x:auto;scrollbar-width:none;gap:6px}
+  .hstat::-webkit-scrollbar{display:none}
+  .hstat > *{flex:none}
+  main{padding:12px 12px 84px}
+  .card{padding:12px}
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr));max-height:none;overflow:visible}
+  .total{font-size:18px}
+  .seg button{padding:10px 4px;font-size:14px}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpi .v{font-size:19px}
+  nav button{font-size:11px;padding:8px 0 10px}
+  .pay summary{flex-wrap:wrap}
+  .row > .btn{flex:none}
+  .inv input{width:56px;padding:6px}
+  .inv td.name{min-width:110px}
+}
+.warnText{color:var(--bad)}
+#cartBar{position:fixed;left:12px;right:12px;bottom:calc(66px + env(safe-area-inset-bottom,0px));z-index:9;
+  display:flex;align-items:center;gap:10px;border:0;border-radius:14px;padding:12px 14px;
+  background:var(--brand);color:#fff;font:inherit;box-shadow:0 6px 20px rgba(0,0,0,.2);cursor:pointer}
+#cartBar[hidden]{display:none}
+#cartBar b{margin-left:auto}
+#cartBar .go{font-size:13px;opacity:.85}
+@media (min-width:761px){ #cartBar{display:none!important} }
 #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--bg);
   padding:10px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
 #toast.on{opacity:1}
@@ -149,13 +185,23 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
 </form></div>
 <header>
   <h1>🍞 브레드이발소 재고</h1>
-  <span id="scanDot" title="USB 바코드 스캐너로 찍으면 현재 탭에 바로 반영됩니다">▮▯▮ 스캐너 대기</span>
-  <button class="btn sm" onclick="openCam()">📷 카메라 스캔</button>
-  <span id="modeBadge" class="badge">연결 확인 중</span>
-  <span id="whoBadge"></span>
-  <button class="btn sm" onclick="lockNow()" title="화면 잠금 / 담당자 변경">🔒 잠금</button>
-  <button class="btn sm" onclick="refresh()">새로고침</button>
+  <div class="hstat">
+    <span id="modeBadge" class="badge">연결 확인 중</span>
+    <span id="syncBadge" class="badge" title="구글 시트 저장 상태"></span>
+    <span id="whoBadge"></span>
+  </div>
+  <div class="hact">
+    <span id="scanDot" title="USB 바코드 스캐너로 찍으면 현재 탭에 바로 반영됩니다">▮▯▮ 스캐너 대기</span>
+    <button class="btn sm" onclick="openCam()" title="카메라로 바코드 찍기">📷<span class="lbl"> 카메라 스캔</span></button>
+    <button class="btn sm" onclick="refresh()" title="새로고침">↻<span class="lbl"> 새로고침</span></button>
+    <a class="btn sm" href="manual.html" target="_blank" rel="noopener" style="text-decoration:none" title="사용법">❓<span class="lbl"> 사용법</span></a>
+    <button class="btn sm primary" onclick="openClose()" title="오늘 기록을 구글 시트에 업로드하고 마감">🏁<span class="lbl"> 마감하기</span><span id="closeBtnCount"></span></button>
+    <button class="btn sm" onclick="lockNow()" title="화면 잠금 / 담당자 변경">🔒<span class="lbl"> 잠금</span></button>
+  </div>
 </header>
+<button id="cartBar" type="button" hidden onclick="document.getElementById('cart').scrollIntoView({behavior:'smooth',block:'center'})">
+  <span id="cartBarTxt">담은 상품 0개</span><b id="cartBarSum">0원</b><span class="go">결제하기 ↓</span>
+</button>
 
 <main>
   <!-- 판매 -->
@@ -279,6 +325,12 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
       <input id="cfgPin" type="password" placeholder="관리 비밀번호 (입장할 때 입력한 값이 자동으로 쓰입니다)" disabled>
       <label class="small muted" style="display:block;margin-top:8px">담당자 이름</label>
       <input id="cfgStaff" type="text" disabled placeholder="입장할 때 입력한 이름이 쓰입니다 (변경: 🔒 잠금)">
+      <label class="small muted" style="display:block;margin-top:12px">저장 방식</label>
+      <div class="seg" id="syncSeg">
+        <button type="button" data-m="close">마감할 때 한꺼번에 업로드</button>
+        <button type="button" data-m="auto">바로바로 자동 저장</button>
+      </div>
+      <p class="small muted" style="margin:6px 0 0">인터넷이 불안정한 매장은 <b>마감할 때 한꺼번에 업로드</b>를 쓰세요. 기록은 이 기기에 안전하게 보관되며, 🏁 마감하기를 누르면 구글 시트에 올라갑니다. 여러 기기를 동시에 쓰면 마감 전까지는 서로의 판매가 재고에 반영되지 않습니다.</p>
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="saveCfg()">저장하고 연결</button>
         <button class="btn" onclick="testConn()">연결 테스트</button>
@@ -303,6 +355,23 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
     <button class="btn sm" onclick="closeCam()">닫기</button></div>
   <video id="camVideo" muted playsinline></video>
   <p class="small muted" id="camMsg" style="margin:8px 0 0">바코드를 화면 가운데에 맞춰 주세요. 인식되면 삐 소리와 함께 현재 탭에 추가됩니다.</p>
+</div></div>
+<div class="modal" id="closeModal" role="dialog" aria-modal="true" aria-labelledby="closeTitle"><div class="box">
+  <div class="row" style="margin-bottom:10px"><b class="grow" id="closeTitle" style="font-size:18px">🏁 오늘 마감하기</b>
+    <button class="btn sm" onclick="hideClose()">닫기</button></div>
+  <div id="closeSum"></div>
+  <p id="closePending" style="margin:12px 0 4px"></p>
+  <p id="closeMsg" class="small" style="margin:4px 0 10px;min-height:18px"></p>
+  <div id="closeActions" class="row">
+    <button class="btn primary big" id="closeGo" onclick="runClose()">업로드하고 마감</button>
+  </div>
+  <div id="closeDone" hidden>
+    <p id="closeDoneTxt" style="margin:0 0 12px"></p>
+    <div class="row">
+      <button class="btn primary grow" onclick="hideClose();lockNow()">🔒 잠그고 끝내기</button>
+      <button class="btn grow" onclick="hideClose()">계속 판매하기</button>
+    </div>
+  </div>
 </div></div>
 <div id="toast"></div>
 <div class="loading" id="loading"><div>처리 중…</div></div>
@@ -333,15 +402,15 @@ function toast(msg, err){
 function busy(on){ $('loading').classList.toggle('on', on); }
 
 /* ============ API (구글 시트 또는 샘플) ============ */
-async function api(action, data={}){
+async function api(action, data={}, opts={}){
   const body = Object.assign({action, pin: cfg.pin, staff: cfg.staff}, data);
-  busy(true);
+  if(!opts.quiet) busy(true);
   try{
     let res;
     if(isDemo()) res = Demo.handle(body);
     else{
       const ctl = new AbortController();
-      const timer = setTimeout(()=>ctl.abort(), 30000);
+      const timer = setTimeout(()=>ctl.abort(), opts.timeout || 60000);
       let text;
       try{
         const r = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), signal: ctl.signal, redirect:'follow'}); // text/plain → CORS 사전요청 없음
@@ -351,7 +420,7 @@ async function api(action, data={}){
       catch(_){ throw new Error(/<html|<!DOCTYPE/i.test(text) ? '웹앱이 JSON 대신 로그인/오류 페이지를 돌려줬습니다 → 배포 액세스 권한을 “모든 사용자”로 설정했는지 확인하세요' : '응답을 읽을 수 없습니다: ' + text.slice(0,80)); }
     }
     if(!res.ok) throw new Error(res.error || '실패');
-    if(res.products) state.products = res.products;
+    if(res.products && !opts.noApply){ state.products = res.products; state.serverProducts = JSON.parse(JSON.stringify(res.products)); }
     return res;
   }catch(e){
     if(/PIN/.test(e.message)){
@@ -361,13 +430,13 @@ async function api(action, data={}){
         ? '비밀번호가 틀렸습니다 (Code.gs의 PIN 값과 입장 비밀번호가 다릅니다)'
         : `웹앱이 아직 예전 코드${v?'('+v+')':''}로 돌고 있습니다 → Apps Script에서 새 Code.gs 저장 후 [배포 → 새 배포]로 웹앱을 다시 만들고, 새 주소를 설정 탭 URL에 넣어 주세요`;
     }
-    const msg = e.name === 'AbortError' ? '응답이 30초 넘게 없습니다 (웹앱 주소·배포 상태 확인)'
-      : e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 → 배포 액세스가 “모든 사용자”인지, 주소가 /exec 로 끝나는지 확인하세요'
+    const msg = e.name === 'AbortError' ? '구글 시트 응답이 60초 넘게 없습니다 (인터넷 연결 또는 구글 서버 지연)'
+      : e.message === 'Failed to fetch' ? (navigator.onLine===false ? '인터넷이 끊겨 있습니다' : '구글 시트에 연결할 수 없습니다 (인터넷 불안정 또는 웹앱 배포 설정 확인)')
       : e.message;
     lastError = msg;
-    toast(msg, true);
+    if(!opts.quiet) toast(msg, true);
     throw new Error(msg);
-  }finally{ busy(false); }
+  }finally{ if(!opts.quiet) busy(false); }
 }
 
 /* ============ 샘플(데모) 백엔드 — 서버와 같은 규칙 ============ */
@@ -428,6 +497,14 @@ const Demo = {
               p.stock=+x.stock; if(x.price!=null) p.price=+x.price; updated++; }
             else { this.db.products.push({code:x.code,barcode:x.barcode||'',name:x.name,price:+x.price||0,stock:+x.stock||0,actual:null,countedAt:'',safety:null,memo:x.memo||''}); added++; } });
           return out({added,updated}); }
+        case 'batch': {
+          const results = [];
+          for(const op of b.ops){
+            const r = this.handle(Object.assign({}, op.data, {action: op.action, staff: b.staff}));
+            results.push({opId: op.opId, ok: r.ok, error: r.error});
+          }
+          return out({results, days:[kstDate()], tx: this.db.tx.filter(t=>t.date===kstDate())});
+        }
         case 'report': return out(Object.assign(summarize(this.db.tx.filter(t=>t.date===b.date), this.db.products, b.date), {archived:false}));
         case 'exportNow': return out({exported:b.date, demo:true});
       }
@@ -458,6 +535,154 @@ function summarize(tx, products, date){
 /* ============ 상태 ============ */
 const state = { products: [], todayTx: [] };
 let lastError = '';
+
+/* ============ 빠른 저장 (화면 먼저 반영 → 구글 시트엔 뒤에서 순서대로 전송) ============ */
+let outbox = LS.get('outbox', []);
+let pumping = false, pumpFails = 0;
+const saveOutbox = () => LS.set('outbox', outbox);
+function newPayId(){
+  const t = kstTime().replace(/\D/g,'');           // yyyyMMddHHmmss
+  return `P${t.slice(2,8)}-${t.slice(8,14)}-${10+Math.floor(Math.random()*90)}`;
+}
+function applyOp(op){
+  const d = op.data, find = c => state.products.find(p=>p.code===c);
+  if(op.action==='sale'){
+    d.items.forEach(it=>{ const p=find(it.code); if(!p) return;
+      p.stock -= it.qty;
+      if(op.time.slice(0,10) === kstDate()) state.todayTx.push({time:op.time, date:op.time.slice(0,10), payId:d.payId, type:'판매', code:p.code, name:p.name,
+        qty:-it.qty, price:p.price, amount:p.price*it.qty, method:d.method, staff:d.staff, memo:''}); });
+  }else if(op.action==='receive'){
+    d.items.forEach(it=>{ const p=find(it.code); if(p) p.stock += it.qty; });
+  }else if(op.action==='count'){
+    const p=find(d.code); if(p){ p.actual = d.actual; p.countedAt = d.actual===null ? '' : op.time.slice(0,16); }
+  }
+}
+const syncMode = () => cfg.syncMode || 'close';   // 'close' = 마감 때 한꺼번에 업로드, 'auto' = 바로바로 저장
+function enqueue(action, data){
+  const op = {id: Date.now().toString(36)+Math.random().toString(36).slice(2,8), action, time: kstTime(), data};
+  op.data.opId = op.id;
+  applyOp(op);
+  outbox.push(op); saveOutbox();
+  renderAll(); renderSync();
+  if(syncMode()==='auto') pump();
+}
+function renderSync(){
+  const b = $('syncBadge'); if(!b) return;
+  if(isDemo() && !outbox.length){ b.textContent=''; b.style.display='none'; return; }
+  b.style.display='';
+  const n = outbox.length;
+  if(!n){ b.textContent='✓ 모두 업로드됨'; b.className='badge'; }
+  else if(syncMode()==='close'){ b.textContent=`💾 이 기기에 보관 ${n}건`; b.className='badge demo'; b.title='마감하기를 누르면 구글 시트에 한꺼번에 업로드됩니다'; }
+  else if(pumpFails){ b.textContent=`⚠ 저장 대기 ${n}건 (재시도 중)`; b.className='badge demo'; }
+  else { b.textContent=`⏳ 저장 중 ${n}건`; b.className='badge'; }
+  const cb = $('closeBtnCount'); if(cb) cb.textContent = n ? ` ${n}` : '';
+}
+const sleep = ms => new Promise(r=>setTimeout(r, ms));
+
+// 보관 중인 기록을 50건씩 묶어서 업로드. 반환: {saved, failed:[{op,error}], days:Set}
+async function uploadAll(onProgress){
+  const failed = [], days = new Set();
+  let saved = 0;
+  while(outbox.length){
+    const chunk = outbox.slice(0, 50);
+    const r = await api('batch', {ops: chunk.map(o=>({opId:o.id, action:o.action, time:o.time, data:o.data}))}, {quiet:true, noApply:true, timeout:90000});
+    const byId = {}; (r.results||[]).forEach(x=>byId[x.opId]=x);
+    const doneIds = new Set();
+    chunk.forEach(o=>{
+      const x = byId[o.id];
+      if(!x) return;                         // 결과가 없으면 남겨 두고 다음에 재시도
+      doneIds.add(o.id);
+      if(x.ok){ saved++; } else { failed.push({op:o, error:x.error}); }
+    });
+    (r.days||[]).forEach(d=>days.add(d));
+    outbox = outbox.filter(o=>!doneIds.has(o.id)); saveOutbox();
+    if(r.products){ state.serverProducts = JSON.parse(JSON.stringify(r.products)); }
+    if(r.tx){ state.serverTx = r.tx; }
+    onProgress && onProgress(saved, outbox.length);
+    if(!doneIds.size) throw new Error('서버가 기록을 처리하지 못했습니다');
+  }
+  // 서버 값으로 화면 맞춤
+  if(state.serverProducts){
+    state.products = JSON.parse(JSON.stringify(state.serverProducts));
+    if(state.serverTx) state.todayTx = JSON.parse(JSON.stringify(state.serverTx));
+    saveCache(); renderAll();
+  }
+  return {saved, failed, days};
+}
+
+// 자동 저장 모드: 뒤에서 조금씩 업로드
+async function pump(){
+  if(pumping || !cfg.pin || syncMode()!=='auto' || !outbox.length) return;
+  pumping = true;
+  try{
+    while(outbox.length && cfg.pin && syncMode()==='auto'){
+      renderSync();
+      try{
+        const r = await uploadAll();
+        pumpFails = 0;
+        r.failed.forEach(f=>toast(`저장 실패로 취소됨: ${f.error}`, true));
+        if($('modeBadge').textContent.startsWith('⚠')) refresh();
+      }catch(e){
+        pumpFails++; renderSync();
+        if(/비밀번호|예전 코드|PIN|알 수 없는 요청/.test(e.message)){ toast(e.message, true); break; }
+        if(pumpFails === 3) toast('인터넷이 불안정합니다. 기록은 이 기기에 보관 중이며 자동으로 다시 보냅니다', true);
+        await sleep(Math.min(30000, 2000 * pumpFails));
+      }
+    }
+  }finally{ pumping = false; renderSync(); }
+}
+window.addEventListener('online', ()=>pump());
+window.addEventListener('beforeunload', e=>{ if(outbox.length){ e.preventDefault(); e.returnValue=''; } });
+
+/* ============ 마감하기 ============ */
+function openClose(){
+  const t = summarize(state.todayTx, state.products, kstDate()).totals;
+  $('closeSum').innerHTML = `
+    <div class="kpis" style="margin:0">
+      <div class="kpi"><div class="l">오늘 결제</div><div class="v">${t.payments}건</div></div>
+      <div class="kpi"><div class="l">판매 수량</div><div class="v">${t.qty}개</div></div>
+      <div class="kpi"><div class="l">매출</div><div class="v">${won(t.revenue)}</div></div>
+      <div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치</div><div class="v">${t.mismatch}개</div></div>
+    </div>`;
+  const n = outbox.length;
+  $('closePending').innerHTML = n
+    ? `이 기기에 아직 업로드하지 않은 기록이 <b>${n}건</b> 있습니다.`
+    : `업로드할 기록이 없습니다. 모든 기록이 구글 시트에 저장되어 있습니다.`;
+  $('closeMsg').textContent = t.mismatch ? '⚠ 재고가 맞지 않는 상품이 있습니다. 가능하면 확인 후 마감하세요.' : '';
+  $('closeMsg').className = 'small' + (t.mismatch ? ' warnText' : '');
+  $('closeGo').disabled = false; $('closeGo').textContent = n ? `업로드하고 마감 (${n}건)` : '마감하기';
+  $('closeDone').hidden = true; $('closeActions').hidden = false;
+  $('closeModal').classList.add('on');
+}
+function hideClose(){ $('closeModal').classList.remove('on'); }
+async function runClose(){
+  const btn = $('closeGo'); btn.disabled = true;
+  const msg = $('closeMsg'); msg.className = 'small';
+  try{
+    if(isDemo()){ msg.textContent = '샘플 모드에서는 구글 시트에 업로드하지 않습니다.'; }
+    const total = outbox.length;
+    msg.textContent = total ? `업로드 중… 0 / ${total}` : '마감 처리 중…';
+    const r = await uploadAll((done, left)=>{ msg.textContent = `업로드 중… ${done} / ${total}`; });
+    const days = new Set([...r.days, kstDate()]);
+    msg.textContent = '날짜별 시트 저장 중…';
+    for(const d of [...days].sort()){
+      try{ await api('exportNow', {date:d}, {quiet:true, timeout:90000}); }catch(e){ /* 자정 자동 보관이 다시 처리 */ }
+    }
+    const fails = r.failed.length ? `<br><span class="warnText">${r.failed.length}건은 반영하지 못했습니다: ${esc(r.failed[0].error)}</span>` : '';
+    $('closeDoneTxt').innerHTML = `✓ 업로드 ${r.saved}건 완료 · <b>${[...days].sort().join(', ')}</b> 시트에 저장했습니다.${fails}`;
+    $('closeDone').hidden = false; $('closeActions').hidden = true;
+    $('closePending').textContent = '모든 기록이 구글 시트에 저장되었습니다.';
+    msg.textContent = '';
+    pumpFails = 0; renderSync();
+  }catch(e){
+    msg.className = 'small warnText';
+    msg.textContent = `업로드하지 못했습니다: ${e.message} — 기록은 이 기기에 그대로 보관되어 있습니다. 인터넷을 확인하고 다시 눌러 주세요. (남은 ${outbox.length}건)`;
+    btn.disabled = false; btn.textContent = `다시 시도 (${outbox.length}건)`;
+    renderSync();
+  }
+}
+
+
 let cart = {};           // code -> qty
 let inCart = {};         // 입고 목록
 let stockFilter = 'all';
@@ -465,20 +690,52 @@ let stockFilter = 'all';
 const isBad = p => p.actual !== null && p.actual !== undefined && p.actual !== '' && Number(p.actual) !== Number(p.stock);
 const isLow = p => p.safety !== null && p.safety !== '' && p.safety !== undefined && p.stock > 0 && p.stock <= p.safety;
 
+let refreshing = false, retryTimer = null;
+function saveCache(){
+  if(isDemo()) return;
+  // 전송 대기 중인 작업이 반영되기 전의 서버 값만 저장
+  LS.set('cache', {date: kstDate(), at: kstTime().slice(11,16), products: state.serverProducts || state.products, tx: state.serverTx || []});
+}
 async function refresh(){
+  if(refreshing) return; refreshing = true;
+  clearTimeout(retryTimer);
+  const cache = LS.get('cache', null);
+  const hadData = state.products.length > 0;
   $('modeBadge').textContent = isDemo() ? '샘플 모드' : '연결 중…';
   $('modeBadge').className = 'badge' + (isDemo()?' demo':'');
-  $('saleGrid').innerHTML = isDemo() ? '' : '<p class="muted">구글 시트에서 상품을 불러오는 중… (처음엔 10초 정도 걸릴 수 있어요)</p>';
-  try{
-    const r = await api('load');
-    state.todayTx = r.tx || [];
-    if(!isDemo()){ $('modeBadge').textContent = `구글 시트 연결됨 · 상품 ${state.products.length}개`; }
-    renderAll();
-  }catch(e){
-    $('modeBadge').textContent = '연결 오류';
-    $('modeBadge').className = 'badge demo';
-    $('saleGrid').innerHTML = `<div class="alert">연결 오류: ${esc(e.message)}<br><span class="small">설정 탭의 “연결 테스트”로 원인을 확인할 수 있어요.</span></div>`;
+  if(!hadData && !isDemo()){
+    if(cache && cache.products && cache.products.length){
+      // 저장해 둔 상품 목록으로 먼저 화면을 띄워서 바로 판매 가능
+      state.products = JSON.parse(JSON.stringify(cache.products));
+      state.todayTx = cache.date === kstDate() ? (cache.tx || []) : [];
+      outbox.forEach(applyOp); renderAll();
+    }else{
+      $('saleGrid').innerHTML = '<p class="muted">구글 시트에서 상품을 불러오는 중… (처음엔 10~20초 걸릴 수 있어요)</p>';
+    }
   }
+  try{
+    const r = await api('load', {}, {quiet: true});
+    state.serverProducts = JSON.parse(JSON.stringify(r.products || []));
+    state.serverTx = r.tx || [];
+    state.todayTx = JSON.parse(JSON.stringify(state.serverTx));
+    if(r.notes && r.notes.length){ toast('상품 점검: ' + r.notes.join(' / '), r.notes.some(n=>n.includes('중복'))); }
+    outbox.forEach(applyOp);   // 아직 전송 중인 작업은 화면에 계속 반영
+    saveCache();
+    if(!isDemo()){ $('modeBadge').textContent = `구글 시트 연결됨 · 상품 ${state.serverProducts.length}개`; }
+    renderAll(); renderSync();
+    pump();
+  }catch(e){
+    const usable = state.products.length > 0;
+    $('modeBadge').className = 'badge demo';
+    if(usable){
+      $('modeBadge').textContent = `⚠ 오프라인 모드${cache ? ' · ' + cache.at + ' 기준' : ''}`;
+      toast('구글 시트 응답이 늦어 저장된 목록으로 판매합니다. 기록은 연결되면 자동 저장됩니다', true);
+    }else{
+      $('modeBadge').textContent = '연결 오류';
+      $('saleGrid').innerHTML = `<div class="alert">연결 오류: ${esc(e.message)}<br><span class="small">잠시 후 자동으로 다시 시도합니다. 계속되면 설정 탭의 “연결 테스트”를 눌러 주세요.</span></div>`;
+    }
+    if(!/비밀번호|예전 코드/.test(e.message)) retryTimer = setTimeout(refresh, 20000);   // 20초 뒤 자동 재시도
+  }finally{ refreshing = false; }
 }
 function renderAll(){ renderSaleGrid(); renderCart(); renderStock(); renderInSelect(); renderToday(); }
 
@@ -525,6 +782,9 @@ function renderCart(){
       <div class="num" style="width:78px">${won(p.price*cart[c])}</div></div>`;
   }).join('') : '<p class="muted">왼쪽에서 상품을 눌러 담으세요.</p>';
   $('cartTotal').textContent = won(total);
+  const cnt = codes.reduce((n,c)=>n+cart[c],0);
+  $('cartBar').hidden = !cnt || currentView()!=='sale';
+  $('cartBarTxt').textContent = `담은 상품 ${cnt}개`; $('cartBarSum').textContent = won(total);
   $('payBtn').disabled = !codes.length;
 }
 document.querySelectorAll('#payMethod button').forEach(b=>b.onclick=()=>{
@@ -534,10 +794,11 @@ async function checkout(){
   const items = Object.entries(cart).map(([code,qty])=>({code,qty}));
   if(!items.length) return;
   const method = document.querySelector('#payMethod .on').textContent;
-  const r = await api('sale', {items, method});
-  cart = {};
-  toast(`결제 완료 ${won(r.total)} · ${r.payId}`);
-  refresh();
+  const payId = newPayId();
+  const total = items.reduce((s,it)=>s + (state.products.find(p=>p.code===it.code)?.price||0)*it.qty, 0);
+  enqueue('sale', {items, method, payId, staff: cfg.staff});
+  cart = {}; renderCart();
+  toast(`결제 완료 ${won(total)} · ${payId}`);
 }
 function renderToday(){
   const s = summarize(state.todayTx, state.products, kstDate()).totals;
@@ -574,7 +835,7 @@ function renderStock(){
   }).join('') || '<tr><td colspan="6" class="muted">해당 상품이 없습니다.</td></tr>';
 }
 async function setCount(code, v){
-  await api('count', {code, actual: v===''?null:Number(v)});
+  enqueue('count', {code, actual: v===''?null:Number(v), staff: cfg.staff});
   const p = state.products.find(x=>x.code===code);
   if(p && isBad(p)) toast(`${p.name}: 전산 ${p.stock} / 실사 ${p.actual} — 다시 확인해 주세요`, true);
   renderAll();
@@ -605,8 +866,8 @@ function renderInList(){
 async function submitIn(){
   const items = Object.entries(inCart).map(([code,qty])=>({code,qty}));
   if(!items.length) return toast('입고할 상품을 추가하세요', true);
-  await api('receive', {items, memo:$('inMemo').value});
-  inCart={}; $('inMemo').value=''; toast('입고 처리 완료'); refresh();
+  enqueue('receive', {items, memo:$('inMemo').value, staff: cfg.staff});
+  inCart={}; $('inMemo').value=''; renderInList(); toast('입고 처리 완료');
 }
 async function addProduct(){
   const product = {code:$('npCode').value.trim(), barcode:$('npBarcode').value.trim(), name:$('npName').value.trim(),
@@ -798,12 +1059,18 @@ async function openCam(deviceId){
 }
 function stopCam(){ try{ camControls && camControls.stop(); }catch(_){} camControls = null; }
 function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
-document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('camModal').classList.contains('on')) closeCam(); });
+document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
 
 /* ============ 설정 / 탭 ============ */
-function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin ? '••••' : ''; $('cfgStaff').value=cfg.staff; }
+function renderSyncSeg(){ document.querySelectorAll('#syncSeg button').forEach(b=>b.classList.toggle('on', b.dataset.m===syncMode())); }
+document.querySelectorAll('#syncSeg button').forEach(b=>b.onclick=()=>{
+  cfg.syncMode = b.dataset.m; LS.set('cfg', {...cfg, pin:''}); renderSyncSeg(); renderSync();
+  toast(b.dataset.m==='auto' ? '바로바로 자동 저장으로 바꿨습니다' : '마감할 때 한꺼번에 업로드하도록 바꿨습니다');
+  pump();
+});
+function fillCfg(){ renderSyncSeg(); $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin ? '••••' : ''; $('cfgStaff').value=cfg.staff; }
 function saveCfg(){
-  cfg = {url:$('cfgUrl').value.trim(), pin:cfg.pin, staff:cfg.staff};
+  cfg = {...cfg, url:$('cfgUrl').value.trim()};
   LS.set('cfg', {...cfg, pin:''}); toast('저장했습니다'); refresh();
 }
 async function testConn(){
@@ -831,13 +1098,14 @@ async function testConn(){
     else log('✖ ' + j.error);
   }catch(e){ log('✖ ' + e.message); }
 }
-function clearCfg(){ cfg={url:'',pin:'',staff:cfg.staff}; LS.set('cfg',cfg); fillCfg(); refresh(); }
+function clearCfg(){ cfg={...cfg, url:''}; LS.set('cfg',cfg); fillCfg(); refresh(); }
 
 document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
   $('v-'+b.dataset.v).classList.add('on');
   if(b.dataset.v==='report') loadReport();
+  renderCart();
   window.scrollTo(0,0);
 });
 
@@ -868,7 +1136,7 @@ async function unlock(e){
   $('whoBadge').textContent = '👤 ' + name;
   $('lock').classList.add('off'); document.body.classList.remove('locked');
   $('lockErr').textContent=''; $('lockPw').value='';
-  fillCfg(); refresh();
+  fillCfg(); refresh().then(pump);
 }
 function lockNow(){
   cart = {}; renderCart();
