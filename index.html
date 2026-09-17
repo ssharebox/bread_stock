@@ -33,7 +33,7 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px so
 header h1{font-size:17px;margin:0;flex:1}
 .badge{font-size:12px;padding:3px 8px;border-radius:99px;background:var(--brand-soft);color:var(--brand);white-space:nowrap}
 .badge.demo{background:#fff3cd;color:#8a5a00}
-main{max-width:980px;margin:0 auto;padding:16px}
+main{max-width:1280px;margin:0 auto;padding:16px}
 nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);
   display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:10}
 nav button{flex:1;border:0;background:none;padding:10px 0 12px;font-size:12px;color:var(--muted);cursor:pointer}
@@ -104,6 +104,14 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 .pay .items{font-size:13px;color:var(--muted);margin:8px 0 0 0}
 .refunded{text-decoration:line-through;opacity:.6}
 
+#scanDot{font-size:12px;padding:3px 8px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+#scanDot.hit{background:var(--brand);color:#fff;border-color:var(--brand)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40;padding:16px}
+.modal.on{display:flex}
+.modal .box{background:var(--card);border-radius:16px;padding:14px;width:min(560px,100%)}
+.modal video{width:100%;border-radius:10px;background:#000;aspect-ratio:4/3;object-fit:cover}
+.flash{animation:flash .6s}
+@keyframes flash{from{background:var(--brand-soft)}to{background:transparent}}
 #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--bg);
   padding:10px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
 #toast.on{opacity:1}
@@ -121,6 +129,8 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 <body>
 <header>
   <h1>🍞 브레드이발소 재고</h1>
+  <span id="scanDot" title="USB 바코드 스캐너로 찍으면 현재 탭에 바로 반영됩니다">▮▯▮ 스캐너 대기</span>
+  <button class="btn sm" onclick="openCam()">📷 카메라 스캔</button>
   <span id="modeBadge" class="badge">연결 확인 중</span>
   <button class="btn sm" onclick="refresh()">새로고침</button>
 </header>
@@ -176,6 +186,7 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
   <section class="view" id="v-in">
     <div class="card">
       <h2>입고 등록</h2>
+      <input id="inScan" type="search" placeholder="바코드를 찍으면 1개씩 입고 목록에 추가돼요" autocomplete="off" style="margin-bottom:8px">
       <div class="row">
         <select class="grow" id="inProduct"></select>
         <input id="inQty" type="number" min="1" value="1" style="width:80px">
@@ -248,8 +259,10 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
       <input id="cfgStaff" type="text" placeholder="예: 김난희">
       <div class="row" style="margin-top:12px">
         <button class="btn primary" onclick="saveCfg()">저장하고 연결</button>
+        <button class="btn" onclick="testConn()">연결 테스트</button>
         <button class="btn danger" onclick="clearCfg()">연결 해제 (샘플 모드)</button>
       </div>
+      <pre id="testOut" class="small" style="white-space:pre-wrap;margin:10px 0 0"></pre>
       <p class="small muted">URL이 비어 있으면 <b>샘플 모드</b>로 동작합니다. 샘플 모드의 데이터는 이 브라우저에만 저장되고 구글 시트에는 기록되지 않습니다.</p>
     </div>
   </section>
@@ -262,6 +275,13 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
   <button data-v="report"><b>📊</b>일별 리포트</button>
   <button data-v="set"><b>⚙️</b>설정</button>
 </nav>
+<div class="modal" id="camModal"><div class="box">
+  <div class="row" style="margin-bottom:8px"><b class="grow">📷 카메라로 바코드 찍기</b>
+    <select id="camSel" style="width:auto;max-width:220px"></select>
+    <button class="btn sm" onclick="closeCam()">닫기</button></div>
+  <video id="camVideo" muted playsinline></video>
+  <p class="small muted" id="camMsg" style="margin:8px 0 0">바코드를 화면 가운데에 맞춰 주세요. 인식되면 삐 소리와 함께 현재 탭에 추가됩니다.</p>
+</div></div>
 <div id="toast"></div>
 <div class="loading" id="loading"><div>처리 중…</div></div>
 
@@ -296,15 +316,26 @@ async function api(action, data={}){
     let res;
     if(isDemo()) res = Demo.handle(body);
     else{
-      const r = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body)}); // text/plain → CORS 사전요청 없음
-      res = await r.json();
+      const ctl = new AbortController();
+      const timer = setTimeout(()=>ctl.abort(), 30000);
+      let text;
+      try{
+        const r = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body), signal: ctl.signal, redirect:'follow'}); // text/plain → CORS 사전요청 없음
+        text = await r.text();
+      }finally{ clearTimeout(timer); }
+      try{ res = JSON.parse(text); }
+      catch(_){ throw new Error(/<html|<!DOCTYPE/i.test(text) ? '웹앱이 JSON 대신 로그인/오류 페이지를 돌려줬습니다 → 배포 액세스 권한을 “모든 사용자”로 설정했는지 확인하세요' : '응답을 읽을 수 없습니다: ' + text.slice(0,80)); }
     }
     if(!res.ok) throw new Error(res.error || '실패');
     if(res.products) state.products = res.products;
     return res;
   }catch(e){
-    toast(e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 (URL·배포 권한 확인)' : e.message, true);
-    throw e;
+    const msg = e.name === 'AbortError' ? '응답이 30초 넘게 없습니다 (웹앱 주소·배포 상태 확인)'
+      : e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 → 배포 액세스가 “모든 사용자”인지, 주소가 /exec 로 끝나는지 확인하세요'
+      : e.message;
+    lastError = msg;
+    toast(msg, true);
+    throw new Error(msg);
   }finally{ busy(false); }
 }
 
@@ -395,6 +426,7 @@ function summarize(tx, products, date){
 
 /* ============ 상태 ============ */
 const state = { products: [], todayTx: [] };
+let lastError = '';
 let cart = {};           // code -> qty
 let inCart = {};         // 입고 목록
 let stockFilter = 'all';
@@ -403,13 +435,19 @@ const isBad = p => p.actual !== null && p.actual !== undefined && p.actual !== '
 const isLow = p => p.safety !== null && p.safety !== '' && p.safety !== undefined && p.stock > 0 && p.stock <= p.safety;
 
 async function refresh(){
-  $('modeBadge').textContent = isDemo() ? '샘플 모드' : '구글 시트 연결됨';
+  $('modeBadge').textContent = isDemo() ? '샘플 모드' : '연결 중…';
   $('modeBadge').className = 'badge' + (isDemo()?' demo':'');
+  $('saleGrid').innerHTML = isDemo() ? '' : '<p class="muted">구글 시트에서 상품을 불러오는 중… (처음엔 10초 정도 걸릴 수 있어요)</p>';
   try{
     const r = await api('load');
     state.todayTx = r.tx || [];
+    if(!isDemo()){ $('modeBadge').textContent = `구글 시트 연결됨 · 상품 ${state.products.length}개`; }
     renderAll();
-  }catch(e){ $('modeBadge').textContent = '연결 오류'; }
+  }catch(e){
+    $('modeBadge').textContent = '연결 오류';
+    $('modeBadge').className = 'badge demo';
+    $('saleGrid').innerHTML = `<div class="alert">연결 오류: ${esc(e.message)}<br><span class="small">설정 탭의 “연결 테스트”로 원인을 확인할 수 있어요.</span></div>`;
+  }
 }
 function renderAll(){ renderSaleGrid(); renderCart(); renderStock(); renderInSelect(); renderToday(); }
 
@@ -429,9 +467,10 @@ $('saleSearch').addEventListener('input', renderSaleGrid);
 $('saleSearch').addEventListener('keydown', e=>{
   if(e.key!=='Enter') return;
   const q = e.target.value.trim();
-  const exacts = state.products.filter(p=>p.barcode===q || p.code===q);
-  if(exacts.length>1){ toast('같은 바코드 상품이 여러 개예요. 목록에서 직접 눌러 주세요', true); return; }
-  const exact = exacts[0];
+  const n = findByScan(q).length;
+  if(n){ handleScan(q); if(n===1){ e.target.value=''; renderSaleGrid(); } return; }
+  if(/^\d{8,}$/.test(q)){ handleScan(q); return; }   // 등록 안 된 바코드
+  const exact = null;
   const list = state.products.filter(p=>matches(p,q));
   const hit = exact || (list.length===1 ? list[0] : null);
   if(hit){ addCart(hit.code); e.target.value=''; renderSaleGrid(); }
@@ -619,11 +658,142 @@ async function exportNow(){
   loadReport();
 }
 
+
+/* ============ 바코드 스캔 (USB 스캐너 · 카메라) ============ */
+// USB/무선 바코드 스캐너는 키보드처럼 숫자를 아주 빠르게 입력하고 Enter를 누릅니다.
+// 어느 탭에서든 이런 빠른 입력을 잡아 현재 탭에 맞게 처리합니다.
+let scanBuf = '', scanLast = 0;
+const SCAN_FIELDS = ['saleSearch','inScan'];
+document.addEventListener('keydown', e=>{
+  const el = document.activeElement;
+  const typing = el && /INPUT|TEXTAREA|SELECT/.test(el.tagName) && !SCAN_FIELDS.includes(el.id);
+  if(typing || e.ctrlKey || e.altKey || e.metaKey) return;
+  const now = Date.now();
+  if(e.key === 'Enter'){
+    if(scanBuf.length >= 4 && !SCAN_FIELDS.includes(el && el.id)){ e.preventDefault(); handleScan(scanBuf); }
+    scanBuf = ''; return;
+  }
+  if(e.key.length !== 1) return;
+  if(now - scanLast > 60) scanBuf = '';   // 사람이 치는 속도면 버퍼 초기화
+  scanBuf += e.key; scanLast = now;
+});
+
+function beep(ok=true){
+  try{
+    const ctx = beep.ctx ||= new (window.AudioContext||window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = ok ? 1500 : 300; o.connect(g); g.connect(ctx.destination);
+    g.gain.value = .15; o.start(); o.stop(ctx.currentTime + (ok ? .09 : .3));
+  }catch(_){}
+}
+
+function findByScan(code){
+  code = String(code).trim();
+  return state.products.filter(p => p.barcode === code || p.code.toLowerCase() === code.toLowerCase());
+}
+
+function currentView(){ return document.querySelector('#nav button.on').dataset.v; }
+
+function handleScan(code){
+  code = String(code).trim(); if(!code) return;
+  const dot = $('scanDot'); dot.textContent = '▮▯▮ ' + code; dot.classList.add('hit');
+  clearTimeout(dot.h); dot.h = setTimeout(()=>{ dot.classList.remove('hit'); dot.textContent='▮▯▮ 스캐너 대기'; }, 1500);
+  const hits = findByScan(code);
+  if(hits.length > 1){ beep(false); toast(`바코드 ${code} 상품이 ${hits.length}개예요. 목록에서 직접 골라 주세요`, true); if(currentView()==='sale'){ $('saleSearch').value=code; renderSaleGrid(); } return; }
+  if(!hits.length){
+    beep(false);
+    toast(`등록되지 않은 바코드: ${code} → 입고·상품 탭에서 등록하세요`, true);
+    $('npBarcode').value = code;
+    return;
+  }
+  const p = hits[0];
+  beep(true);
+  const v = currentView();
+  if(v === 'in'){
+    inCart[p.code] = (inCart[p.code]||0) + 1; renderInList();
+    toast(`입고 목록 +1 · ${p.name} (${inCart[p.code]}개)`);
+  }else if(v === 'stock'){
+    $('stockSearch').value = p.code; renderStock();
+    const inp = document.querySelector('#stockBody input'); if(inp){ inp.focus(); inp.select(); }
+    toast(`${p.name} · 실사 수량을 입력하고 Enter`);
+  }else{
+    if(v !== 'sale') document.querySelector('#nav button[data-v=sale]').click();
+    addCart(p.code);
+    toast(`${p.name} 담음 (${cart[p.code]}개)`);
+  }
+}
+
+// 스캔 입력칸에서 Enter
+$('inScan').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); handleScan(e.target.value); e.target.value=''; } });
+// 재고 탭: 실사 칸에서 Enter 치면 저장 후 다음 스캔 대기
+document.addEventListener('keydown', e=>{
+  if(e.key==='Enter' && e.target.matches && e.target.matches('#stockBody input')){ e.target.blur(); }
+});
+
+// 카메라 스캔 (웹캠) — ZXing 라이브러리를 필요할 때만 불러옴
+let camControls = null, camLastCode = '', camLastAt = 0;
+function loadZXing(){
+  if(window.ZXingBrowser) return Promise.resolve();
+  return new Promise((ok, fail)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js';
+    sc.onload = ok; sc.onerror = ()=>fail(new Error('카메라 스캔 모듈을 불러오지 못했습니다'));
+    document.head.appendChild(sc);
+  });
+}
+async function openCam(deviceId){
+  $('camModal').classList.add('on');
+  try{
+    await loadZXing();
+    const reader = new ZXingBrowser.BrowserMultiFormatReader();
+    const cams = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+    if(!cams.length) throw new Error('연결된 카메라가 없습니다');
+    const sel = $('camSel');
+    sel.innerHTML = cams.map(c=>`<option value="${esc(c.deviceId)}">${esc(c.label||'카메라')}</option>`).join('');
+    if(deviceId) sel.value = deviceId;
+    sel.onchange = ()=>{ stopCam(); openCam(sel.value); };
+    stopCam();
+    camControls = await reader.decodeFromVideoDevice(sel.value || undefined, $('camVideo'), (res)=>{
+      if(!res) return;
+      const code = res.getText(), now = Date.now();
+      if(code === camLastCode && now - camLastAt < 2000) return;  // 같은 바코드 연속 인식 방지
+      camLastCode = code; camLastAt = now;
+      handleScan(code);
+      $('camMsg').textContent = `인식: ${code}`;
+    });
+  }catch(e){
+    $('camMsg').textContent = '✖ ' + (e.name==='NotAllowedError' ? '카메라 권한이 거부되었습니다. 주소창 왼쪽 자물쇠에서 카메라를 허용하세요' : e.message);
+  }
+}
+function stopCam(){ try{ camControls && camControls.stop(); }catch(_){} camControls = null; }
+function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('camModal').classList.contains('on')) closeCam(); });
+
 /* ============ 설정 / 탭 ============ */
 function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin; $('cfgStaff').value=cfg.staff; }
 function saveCfg(){
   cfg = {url:$('cfgUrl').value.trim(), pin:$('cfgPin').value.trim(), staff:$('cfgStaff').value.trim()};
   LS.set('cfg', cfg); toast('저장했습니다'); refresh();
+}
+async function testConn(){
+  const out = $('testOut'); const url = $('cfgUrl').value.trim();
+  const log = t => out.textContent += t + '\n';
+  out.textContent = '';
+  if(!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url)) log('✖ 주소 형식이 다릅니다. https://script.google.com/macros/s/…/exec 이어야 합니다.');
+  log('1) 웹앱 접속 확인…');
+  try{
+    const t0 = Date.now();
+    const r = await fetch(url, {redirect:'follow'}); const txt = await r.text();
+    if(/재고 API 동작 중/.test(txt)) log(`✔ 웹앱 응답 정상 (${((Date.now()-t0)/1000).toFixed(1)}초)`);
+    else { log('✖ 웹앱이 예상과 다른 응답을 줬습니다 → Code.gs가 최신인지, 새 버전으로 배포했는지 확인'); log(txt.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,200)); return; }
+  }catch(e){ log('✖ 접속 실패 → 배포 > 액세스 권한을 “모든 사용자”로 바꾸고 새 버전으로 배포하세요'); return; }
+  log('2) PIN · 시트 확인…');
+  try{
+    const r = await fetch(url, {method:'POST', body: JSON.stringify({action:'load', pin:$('cfgPin').value.trim()})});
+    const j = await r.json();
+    if(j.ok) log(`✔ 연결 성공 · 상품 ${j.products.length}개` + (j.products.length?'':' (상품 시트가 비어 있어요 → 상품을 등록하세요)'));
+    else log('✖ ' + j.error);
+  }catch(e){ log('✖ ' + e.message); }
 }
 function clearCfg(){ cfg={url:'',pin:'',staff:cfg.staff}; LS.set('cfg',cfg); fillCfg(); refresh(); }
 
