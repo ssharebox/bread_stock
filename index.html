@@ -112,6 +112,15 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 .modal video{width:100%;border-radius:10px;background:#000;aspect-ratio:4/3;object-fit:cover}
 .flash{animation:flash .6s}
 @keyframes flash{from{background:var(--brand-soft)}to{background:transparent}}
+#lock{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px}
+#lock.off{display:none}
+#lock .box{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:28px 24px;width:min(360px,100%);text-align:center}
+#lock h2{font-size:20px;margin:6px 0 4px}
+#lock input{text-align:center;font-size:24px;letter-spacing:.4em;margin:18px 0 10px}
+#lock .err{color:var(--bad);min-height:20px;font-size:13px}
+#lock.shake .box{animation:shake .35s}
+@keyframes shake{25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+body.locked main,body.locked nav,body.locked header{visibility:hidden}
 #toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--bg);
   padding:10px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
 #toast.on{opacity:1}
@@ -126,12 +135,21 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
 }
 </style>
 </head>
-<body>
+<body class="locked">
+<div id="lock"><form class="box" onsubmit="unlock(event)">
+  <div style="font-size:40px">🍞</div>
+  <h2>브레드이발소 재고관리</h2>
+  <div class="small muted">관리 비밀번호를 입력하세요</div>
+  <input id="lockPw" type="password" inputmode="numeric" autocomplete="off" maxlength="12" autofocus>
+  <div class="err" id="lockErr"></div>
+  <button class="btn primary big" type="submit">입장</button>
+</form></div>
 <header>
   <h1>🍞 브레드이발소 재고</h1>
   <span id="scanDot" title="USB 바코드 스캐너로 찍으면 현재 탭에 바로 반영됩니다">▮▯▮ 스캐너 대기</span>
   <button class="btn sm" onclick="openCam()">📷 카메라 스캔</button>
   <span id="modeBadge" class="badge">연결 확인 중</span>
+  <button class="btn sm" onclick="lockNow()" title="화면 잠금">🔒 잠금</button>
   <button class="btn sm" onclick="refresh()">새로고침</button>
 </header>
 
@@ -254,7 +272,7 @@ tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
       <label class="small muted">Apps Script 웹 앱 URL</label>
       <input id="cfgUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
       <label class="small muted" style="display:block;margin-top:8px">PIN</label>
-      <input id="cfgPin" type="password" placeholder="Apps Script에 설정한 PIN">
+      <input id="cfgPin" type="password" placeholder="관리 비밀번호 (입장할 때 입력한 값이 자동으로 쓰입니다)" disabled>
       <label class="small muted" style="display:block;margin-top:8px">담당자 이름</label>
       <input id="cfgStaff" type="text" placeholder="예: 김난희">
       <div class="row" style="margin-top:12px">
@@ -330,6 +348,7 @@ async function api(action, data={}){
     if(res.products) state.products = res.products;
     return res;
   }catch(e){
+    if(/PIN/.test(e.message)) e.message = '구글 시트 쪽 비밀번호가 다릅니다 → Apps Script 프로젝트 설정 > 스크립트 속성 PIN 값을 1998로 바꿔 주세요';
     const msg = e.name === 'AbortError' ? '응답이 30초 넘게 없습니다 (웹앱 주소·배포 상태 확인)'
       : e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 → 배포 액세스가 “모든 사용자”인지, 주소가 /exec 로 끝나는지 확인하세요'
       : e.message;
@@ -770,10 +789,10 @@ function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
 document.addEventListener('keydown', e=>{ if(e.key==='Escape' && $('camModal').classList.contains('on')) closeCam(); });
 
 /* ============ 설정 / 탭 ============ */
-function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin; $('cfgStaff').value=cfg.staff; }
+function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin ? '••••' : ''; $('cfgStaff').value=cfg.staff; }
 function saveCfg(){
-  cfg = {url:$('cfgUrl').value.trim(), pin:$('cfgPin').value.trim(), staff:$('cfgStaff').value.trim()};
-  LS.set('cfg', cfg); toast('저장했습니다'); refresh();
+  cfg = {url:$('cfgUrl').value.trim(), pin:cfg.pin, staff:$('cfgStaff').value.trim()};
+  LS.set('cfg', {...cfg, pin:''}); toast('저장했습니다'); refresh();
 }
 async function testConn(){
   const out = $('testOut'); const url = $('cfgUrl').value.trim();
@@ -784,12 +803,17 @@ async function testConn(){
   try{
     const t0 = Date.now();
     const r = await fetch(url, {redirect:'follow'}); const txt = await r.text();
-    if(/재고 API 동작 중/.test(txt)){ const v=(txt.match(/"version":"([^"]+)/)||[])[1]; log(`✔ 웹앱 응답 정상 (${((Date.now()-t0)/1000).toFixed(1)}초) · 코드 버전: ${v||'구버전 → Code.gs를 새 버전으로 다시 배포하세요'}`); }
+    if(/재고 API 동작 중/.test(txt)){
+      let j={}; try{ j=JSON.parse(txt); }catch(_){}
+      log(`✔ 웹앱 응답 정상 (${((Date.now()-t0)/1000).toFixed(1)}초)`);
+      log(`   · 코드 버전: ${j.version || '없음 → 이 웹앱은 예전 코드입니다. 새 Code.gs로 배포하세요'}`);
+      log(`   · 연결된 구글 시트: ${j.sheet || '알 수 없음(예전 코드)'}`);
+    }
     else { log('✖ 웹앱이 예상과 다른 응답을 줬습니다 → Code.gs가 최신인지, 새 버전으로 배포했는지 확인'); log(txt.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,200)); return; }
   }catch(e){ log('✖ 접속 실패 → 배포 > 액세스 권한을 “모든 사용자”로 바꾸고 새 버전으로 배포하세요'); return; }
   log('2) PIN · 시트 확인…');
   try{
-    const r = await fetch(url, {method:'POST', body: JSON.stringify({action:'load', pin:$('cfgPin').value.trim()})});
+    const r = await fetch(url, {method:'POST', body: JSON.stringify({action:'load', pin:cfg.pin})});
     const j = await r.json();
     if(j.ok) log(`✔ 연결 성공 · 상품 ${j.products.length}개` + (j.products.length?'':' (상품 시트가 비어 있어요 → 상품을 등록하세요)'));
     else log('✖ ' + j.error);
@@ -805,8 +829,42 @@ document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
   window.scrollTo(0,0);
 });
 
-fillCfg();
-refresh();
+/* ============ 입장 비밀번호 ============ */
+const LOCK_HASH = 'd54123de468bd42ea00dafbd777f85fe5fa1ff6404d9838c007953c25c92a1c5';  // 비밀번호의 SHA-256 (평문을 코드에 두지 않음)
+async function sha256(t){
+  if(window.crypto && crypto.subtle){
+    const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+    return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  }
+  return null;
+}
+async function unlock(e){
+  e && e.preventDefault();
+  const pw = $('lockPw').value.trim();
+  const h = await sha256(pw);
+  if(h !== LOCK_HASH){
+    $('lockErr').textContent = '비밀번호가 맞지 않습니다';
+    $('lock').classList.add('shake'); setTimeout(()=>$('lock').classList.remove('shake'), 400);
+    $('lockPw').value=''; $('lockPw').focus(); return;
+  }
+  // 입장 비밀번호 = 구글 시트 웹앱 PIN
+  cfg.pin = pw; LS.set('cfg', {...cfg, pin:''});
+  try{ sessionStorage.setItem('bb_pin', pw); }catch(_){}
+  $('lock').classList.add('off'); document.body.classList.remove('locked');
+  $('lockErr').textContent=''; $('lockPw').value='';
+  fillCfg(); refresh();
+}
+function lockNow(){
+  cart = {}; renderCart();
+  cfg.pin = ''; try{ sessionStorage.removeItem('bb_pin'); }catch(_){}
+  document.body.classList.add('locked'); $('lock').classList.remove('off');
+  setTimeout(()=>$('lockPw').focus(), 50);
+}
+
+// 같은 탭에서 새로고침한 경우에만 다시 묻지 않음 (창을 새로 열면 항상 비밀번호 입력)
+let savedPin = null; try{ savedPin = sessionStorage.getItem('bb_pin'); }catch(_){}
+if(savedPin){ $('lockPw').value = savedPin; unlock(); }
+else setTimeout(()=>$('lockPw').focus(), 50);
 </script>
 </body>
 </html>
