@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>브레드이발소 재고관리</title>
+<meta name="theme-color" content="#7a4a22">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍞</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#faf6f0; --card:#ffffff; --ink:#2b2118; --muted:#7d6f62; --line:#eadfd2;
+  --brand:#7a4a22; --brand-2:#c98a45; --brand-soft:#f3e6d6;
+  --ok:#2f7d4f; --warn:#b7791f; --bad:#b42318; --bad-bg:#fde8e7; --bad-line:#f4b4ae;
+  --radius:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1b1612; --card:#251e18; --ink:#f3ebe2; --muted:#b3a597; --line:#3a2f26;
+    --brand:#e0a868; --brand-2:#c98a45; --brand-soft:#3a2c1f;
+    --bad:#ff8a80; --bad-bg:#3d1f1d; --bad-line:#7a302b; --ok:#6fcf97; --warn:#f0b35a;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans KR",system-ui,sans-serif;font-size:15px;
+  padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+button,input,select{font:inherit;color:inherit}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);
+  padding:12px 16px;display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;flex:1}
+.badge{font-size:12px;padding:3px 8px;border-radius:99px;background:var(--brand-soft);color:var(--brand);white-space:nowrap}
+.badge.demo{background:#fff3cd;color:#8a5a00}
+main{max-width:980px;margin:0 auto;padding:16px}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);
+  display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:10}
+nav button{flex:1;border:0;background:none;padding:10px 0 12px;font-size:12px;color:var(--muted);cursor:pointer}
+nav button b{display:block;font-size:20px;line-height:1.3}
+nav button.on{color:var(--brand);font-weight:700}
+nav .dot{display:inline-block;min-width:16px;padding:0 4px;border-radius:9px;background:var(--bad);color:#fff;font-size:10px;margin-left:2px}
+.view{display:none}.view.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:14px}
+h2{font-size:15px;margin:0 0 10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+input[type=text],input[type=number],input[type=search],input[type=date],input[type=password],select{
+  width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.btn{border:0;border-radius:10px;padding:10px 14px;background:var(--brand-soft);color:var(--brand);font-weight:700;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--brand);color:#fff}
+.btn.danger{background:var(--bad-bg);color:var(--bad)}
+.btn.big{width:100%;padding:14px;font-size:17px}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.sm{padding:6px 10px;font-size:13px}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+.num{font-variant-numeric:tabular-nums;text-align:right}
+
+/* 판매 */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;max-height:46vh;overflow:auto;padding:2px}
+.pbtn{text-align:left;border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:10px;cursor:pointer;min-height:74px}
+.pbtn .n{font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pbtn .m{font-size:12px;color:var(--muted);margin-top:4px;display:flex;justify-content:space-between}
+.pbtn.out{opacity:.55}
+.pbtn.bad{border-color:var(--bad-line);background:var(--bad-bg)}
+.cart-line{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px dashed var(--line)}
+.cart-line:last-child{border-bottom:0}
+.qty{display:flex;align-items:center;gap:4px}
+.qty button{width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--bg);cursor:pointer;font-size:18px}
+.qty span{min-width:24px;text-align:center;font-weight:700}
+.total{display:flex;justify-content:space-between;font-size:20px;font-weight:700;margin:12px 0}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 6px;cursor:pointer}
+.seg button.on{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:700}
+
+/* 재고 */
+.alert{border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--bad);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-weight:500}
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th,td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:12px;color:var(--muted);font-weight:500;text-align:left;white-space:nowrap}
+tr.bad td{background:var(--bad-bg);color:var(--bad)}
+tr.bad td:first-child{box-shadow:inset 4px 0 0 var(--bad)}
+.inv td.name{min-width:150px}
+.inv input{width:70px;padding:7px;text-align:right}
+.tag{font-size:11px;padding:2px 6px;border-radius:6px;background:var(--brand-soft);color:var(--brand);margin-left:4px;white-space:nowrap}
+.tag.red{background:var(--bad);color:#fff}
+.tag.warn{background:#fdf0d5;color:#8a5a00}
+.chips{display:flex;gap:6px;overflow-x:auto;margin:10px 0}
+.chips button{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+.chips button.on{background:var(--brand);border-color:var(--brand);color:#fff}
+
+/* 리포트 */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi .v{font-size:22px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi.bad{border-color:var(--bad-line);background:var(--bad-bg)}
+.kpi.bad .v{color:var(--bad)}
+.pay{border-bottom:1px solid var(--line);padding:10px 0}
+.pay summary{cursor:pointer;display:flex;gap:8px;align-items:center;list-style:none}
+.pay summary::-webkit-details-marker{display:none}
+.pay .items{font-size:13px;color:var(--muted);margin:8px 0 0 0}
+.refunded{text-decoration:line-through;opacity:.6}
+
+#toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--ink);color:var(--bg);
+  padding:10px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;z-index:20;max-width:90vw;text-align:center}
+#toast.on{opacity:1}
+#toast.err{background:var(--bad);color:#fff}
+.loading{position:fixed;inset:0;background:rgba(0,0,0,.15);display:none;align-items:center;justify-content:center;z-index:30}
+.loading.on{display:flex}
+.loading div{background:var(--card);padding:14px 20px;border-radius:12px;border:1px solid var(--line)}
+@media (max-width:520px){ .col-price{display:none} .inv td.name{min-width:120px} th,td{padding:9px 5px} }
+@media (min-width:760px){
+  .sale-layout{display:grid;grid-template-columns:1.4fr 1fr;gap:14px;align-items:start}
+  .grid{max-height:62vh}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍞 브레드이발소 재고</h1>
+  <span id="modeBadge" class="badge">연결 확인 중</span>
+  <button class="btn sm" onclick="refresh()">새로고침</button>
+</header>
+
+<main>
+  <!-- 판매 -->
+  <section class="view on" id="v-sale">
+    <div class="sale-layout">
+      <div class="card">
+        <div class="row">
+          <input class="grow" id="saleSearch" type="search" placeholder="상품명·코드 검색 / 바코드 스캔 후 Enter" autocomplete="off">
+        </div>
+        <div class="grid" id="saleGrid" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h2>이번 결제</h2>
+        <div id="cart"><p class="muted">왼쪽에서 상품을 눌러 담으세요.</p></div>
+        <div class="total"><span>합계</span><span id="cartTotal">0원</span></div>
+        <div class="seg" id="payMethod">
+          <button class="on">카드</button><button>현금</button><button>계좌이체</button><button>기타</button>
+        </div>
+        <div style="height:10px"></div>
+        <button class="btn primary big" id="payBtn" onclick="checkout()">결제 완료 · 재고 차감</button>
+        <button class="btn sm" style="margin-top:8px" onclick="cart={};renderCart()">비우기</button>
+        <p class="small muted" id="todayLine" style="margin-bottom:0"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 재고 -->
+  <section class="view" id="v-stock">
+    <div id="mismatchAlert"></div>
+    <div class="card">
+      <input id="stockSearch" type="search" placeholder="상품명·코드 검색">
+      <div class="chips" id="stockFilter">
+        <button class="on" data-f="all">전체</button>
+        <button data-f="bad">불일치</button>
+        <button data-f="low">부족</button>
+        <button data-f="out">품절</button>
+        <button data-f="uncounted">실사 안 함</button>
+      </div>
+      <p class="small muted" style="margin:0 0 8px">실사 칸에 매장에서 직접 센 수량을 입력하세요. 전산재고와 다르면 <b style="color:var(--bad)">빨간색</b>으로 표시됩니다.</p>
+      <div class="tbl-wrap">
+        <table class="inv">
+          <thead><tr><th>상품</th><th class="num col-price">판매가</th><th class="num">전산</th><th class="num">실사</th><th class="num">차이</th><th></th></tr></thead>
+          <tbody id="stockBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 입고 / 상품 -->
+  <section class="view" id="v-in">
+    <div class="card">
+      <h2>입고 등록</h2>
+      <div class="row">
+        <select class="grow" id="inProduct"></select>
+        <input id="inQty" type="number" min="1" value="1" style="width:80px">
+        <button class="btn" onclick="addIn()">추가</button>
+      </div>
+      <div id="inList" style="margin-top:10px"></div>
+      <input id="inMemo" type="text" placeholder="메모 (예: 본사 입고 9/17)" style="margin-top:8px">
+      <button class="btn primary big" style="margin-top:10px" onclick="submitIn()">입고 처리</button>
+    </div>
+
+    <div class="card">
+      <h2>인포스페이스 엑셀로 일괄 반영</h2>
+      <p class="small muted" style="margin-top:0">창고매장재고 엑셀(.xls/.xlsx/.csv)을 올리면 코드 기준으로 전산재고·판매가를 덮어쓰고, 없는 상품은 새로 추가합니다. 수량이 바뀐 상품은 ‘조정’으로 기록됩니다.</p>
+      <input id="xlsFile" type="file" accept=".xls,.xlsx,.csv">
+      <div id="importPreview" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>상품 추가</h2>
+      <div class="row">
+        <input class="grow" id="npCode" type="text" placeholder="코드 *">
+        <input class="grow" id="npBarcode" type="text" placeholder="바코드">
+      </div>
+      <input id="npName" type="text" placeholder="상품명 *" style="margin-top:8px">
+      <div class="row" style="margin-top:8px">
+        <input class="grow" id="npPrice" type="number" placeholder="판매가">
+        <input class="grow" id="npStock" type="number" placeholder="시작 재고">
+        <input class="grow" id="npSafety" type="number" placeholder="안전재고(부족 기준)">
+      </div>
+      <button class="btn" style="margin-top:10px" onclick="addProduct()">상품 추가</button>
+    </div>
+  </section>
+
+  <!-- 리포트 -->
+  <section class="view" id="v-report">
+    <div class="card">
+      <div class="row">
+        <button class="btn sm" onclick="shiftDate(-1)">◀</button>
+        <input class="grow" id="repDate" type="date">
+        <button class="btn sm" onclick="shiftDate(1)">▶</button>
+        <button class="btn sm" onclick="loadReport()">조회</button>
+      </div>
+      <p class="small muted" id="archInfo" style="margin:8px 0 0"></p>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2>결제별 판매 <span class="muted small">(누르면 상세)</span></h2>
+      <div id="payList"></div>
+    </div>
+    <div class="card">
+      <h2>상품별 판매</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>상품</th><th class="num">수량</th><th class="num">매출</th></tr></thead>
+        <tbody id="prodSales"></tbody>
+      </table></div>
+    </div>
+    <button class="btn big" onclick="exportNow()">이 날짜를 지금 시트로 내보내기</button>
+    <p class="small muted">매일 00시(00:00~01:00 사이)에 전날 내역이 날짜 이름의 새 시트로 자동 보관됩니다.</p>
+  </section>
+
+  <!-- 설정 -->
+  <section class="view" id="v-set">
+    <div class="card">
+      <h2>구글 시트 연결</h2>
+      <label class="small muted">Apps Script 웹 앱 URL</label>
+      <input id="cfgUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+      <label class="small muted" style="display:block;margin-top:8px">PIN</label>
+      <input id="cfgPin" type="password" placeholder="Apps Script에 설정한 PIN">
+      <label class="small muted" style="display:block;margin-top:8px">담당자 이름</label>
+      <input id="cfgStaff" type="text" placeholder="예: 김난희">
+      <div class="row" style="margin-top:12px">
+        <button class="btn primary" onclick="saveCfg()">저장하고 연결</button>
+        <button class="btn danger" onclick="clearCfg()">연결 해제 (샘플 모드)</button>
+      </div>
+      <p class="small muted">URL이 비어 있으면 <b>샘플 모드</b>로 동작합니다. 샘플 모드의 데이터는 이 브라우저에만 저장되고 구글 시트에는 기록되지 않습니다.</p>
+    </div>
+  </section>
+</main>
+
+<nav id="nav">
+  <button class="on" data-v="sale"><b>🧾</b>판매</button>
+  <button data-v="stock"><b>📦</b>재고<span id="navBad"></span></button>
+  <button data-v="in"><b>🚚</b>입고·상품</button>
+  <button data-v="report"><b>📊</b>일별 리포트</button>
+  <button data-v="set"><b>⚙️</b>설정</button>
+</nav>
+<div id="toast"></div>
+<div class="loading" id="loading"><div>처리 중…</div></div>
+
+<script>
+/* ============ 설정 / 저장소 ============ */
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem('bb_'+k); return v===null?d:JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('bb_'+k, JSON.stringify(v)); }catch(e){} },
+  del(k){ try{ localStorage.removeItem('bb_'+k); }catch(e){} }
+};
+let cfg = LS.get('cfg', {url:'', pin:'', staff:''});
+const isDemo = () => !cfg.url;
+
+const won = n => (Number(n)||0).toLocaleString('ko-KR') + '원';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = id => document.getElementById(id);
+const kstDate = (d=new Date()) => new Date(d.getTime() + 9*3600e3).toISOString().slice(0,10);
+const kstTime = (d=new Date()) => new Date(d.getTime() + 9*3600e3).toISOString().slice(0,19).replace('T',' ');
+
+function toast(msg, err){
+  const t = $('toast'); t.textContent = msg; t.className = 'on' + (err?' err':'');
+  clearTimeout(toast.h); toast.h = setTimeout(()=> t.className = err?'err':'', err?4000:2200);
+}
+function busy(on){ $('loading').classList.toggle('on', on); }
+
+/* ============ API (구글 시트 또는 샘플) ============ */
+async function api(action, data={}){
+  const body = Object.assign({action, pin: cfg.pin, staff: cfg.staff}, data);
+  busy(true);
+  try{
+    let res;
+    if(isDemo()) res = Demo.handle(body);
+    else{
+      const r = await fetch(cfg.url, {method:'POST', body: JSON.stringify(body)}); // text/plain → CORS 사전요청 없음
+      res = await r.json();
+    }
+    if(!res.ok) throw new Error(res.error || '실패');
+    if(res.products) state.products = res.products;
+    return res;
+  }catch(e){
+    toast(e.message === 'Failed to fetch' ? '구글 시트에 연결할 수 없습니다 (URL·배포 권한 확인)' : e.message, true);
+    throw e;
+  }finally{ busy(false); }
+}
+
+/* ============ 샘플(데모) 백엔드 — 서버와 같은 규칙 ============ */
+const Demo = {
+  db: null,
+  seed(){
+    const names = [
+      ['BR001','브레드 이발소 인형 25cm',29000,8],['BR002','윌크 인형 25cm',29000,6],
+      ['BR003','초코 인형 키링',15000,12],['BR004','브레드 아크릴 스탠드',12000,10],
+      ['BR005','브레드 이발소 머그컵',18000,5],['BR006','마카롱 파우치',16000,0],
+      ['BR007','브레드 스티커 팩',5000,30],['BR008','소보로 쿠션',32000,3],
+    ];
+    return { products: names.map(([code,name,price,stock])=>({code,barcode:'',name,price,stock,actual:null,countedAt:'',safety:3,memo:''})), tx: [] };
+  },
+  save(){ LS.set('demo', this.db); },
+  load(){ this.db = LS.get('demo', null) || this.seed(); },
+  map(){ const m={}; this.db.products.forEach(p=>m[p.code]=p); return m; },
+  items(items){
+    if(!items || !items.length) throw new Error('상품이 없습니다');
+    const m = this.map();
+    return items.map(it=>{ const p=m[it.code]; if(!p) throw new Error('없는 상품 코드: '+it.code);
+      const qty=Math.round(+it.qty); if(qty<=0) throw new Error('수량은 1 이상'); return {p,qty}; });
+  },
+  tx(row){ this.db.tx.push(Object.assign({time:kstTime(), date:kstDate(), payId:'', method:'', memo:''}, row)); },
+  handle(b){
+    if(!this.db) this.load();
+    const out = r => { this.save(); return Object.assign({ok:true, products: JSON.parse(JSON.stringify(this.db.products))}, r); };
+    const m = this.map();
+    try{
+      switch(b.action){
+        case 'load': return out({today: kstDate(), tx: this.db.tx.filter(t=>t.date===kstDate())});
+        case 'sale': {
+          const its = this.items(b.items);
+          const payId = 'P' + kstTime().replace(/\D/g,'').slice(2,8) + '-' + kstTime().replace(/\D/g,'').slice(8) + '-' + (10+Math.floor(Math.random()*90));
+          let total = 0;
+          its.forEach(({p,qty})=>{ p.stock-=qty; total+=p.price*qty;
+            this.tx({payId,type:'판매',code:p.code,name:p.name,qty:-qty,price:p.price,amount:p.price*qty,method:b.method,staff:b.staff}); });
+          return out({payId,total});
+        }
+        case 'receive':
+          this.items(b.items).forEach(({p,qty})=>{ p.stock+=qty; this.tx({type:'입고',code:p.code,name:p.name,qty,price:p.price,amount:0,staff:b.staff,memo:b.memo}); });
+          return out({});
+        case 'count': { const p=m[b.code]; if(b.actual===null||b.actual===''){p.actual=null;p.countedAt='';} else {p.actual=+b.actual;p.countedAt=kstTime().slice(0,16);} return out({}); }
+        case 'adjust': { const p=m[b.code]; const to=p.actual; if(to===null) throw new Error('실사 수량이 없습니다');
+          this.tx({type:'조정',code:p.code,name:p.name,qty:to-p.stock,price:p.price,amount:0,staff:b.staff,memo:`전산 ${p.stock} → ${to}`}); p.stock=to; return out({}); }
+        case 'refund': {
+          if(this.db.tx.some(t=>t.payId===b.payId&&t.type==='환불')) throw new Error('이미 환불된 결제입니다');
+          const s=this.db.tx.filter(t=>t.payId===b.payId&&t.type==='판매');
+          s.forEach(x=>{ if(m[x.code]) m[x.code].stock+=-x.qty;
+            this.tx({payId:b.payId,type:'환불',code:x.code,name:x.name,qty:-x.qty,price:x.price,amount:-x.amount,method:x.method,staff:b.staff}); });
+          return out({});
+        }
+        case 'addProduct': { const p=b.product; if(!p.code||!p.name) throw new Error('코드와 상품명은 필수입니다'); if(m[p.code]) throw new Error('이미 있는 코드');
+          this.db.products.push({code:p.code,barcode:p.barcode||'',name:p.name,price:+p.price||0,stock:+p.stock||0,actual:null,countedAt:'',safety:p.safety===''?null:+p.safety,memo:''}); return out({}); }
+        case 'importProducts': { let added=0,updated=0;
+          b.products.forEach(x=>{ const p=m[x.code];
+            if(p){ if(+x.stock!==p.stock) this.tx({type:'조정',code:p.code,name:p.name,qty:+x.stock-p.stock,price:p.price,amount:0,staff:b.staff,memo:'엑셀 일괄 반영'});
+              p.stock=+x.stock; if(x.price!=null) p.price=+x.price; updated++; }
+            else { this.db.products.push({code:x.code,barcode:x.barcode||'',name:x.name,price:+x.price||0,stock:+x.stock||0,actual:null,countedAt:'',safety:null,memo:''}); added++; } });
+          return out({added,updated}); }
+        case 'report': return out(Object.assign(summarize(this.db.tx.filter(t=>t.date===b.date), this.db.products, b.date), {archived:false}));
+        case 'exportNow': return out({exported:b.date, demo:true});
+      }
+      throw new Error('알 수 없는 요청');
+    }catch(e){ return {ok:false, error:e.message}; }
+  }
+};
+
+// 서버(Code.gs summarize_)와 동일한 집계 — 샘플 모드용
+function summarize(tx, products, date){
+  const sales = tx.filter(t=>t.type==='판매'), refunds = tx.filter(t=>t.type==='환불');
+  const rids = new Set(refunds.map(r=>r.payId));
+  const pays = {};
+  sales.forEach(s=>{ const o = pays[s.payId] ||= {payId:s.payId,time:s.time,method:s.method,staff:s.staff,items:[],qty:0,amount:0};
+    o.items.push({code:s.code,name:s.name,qty:-s.qty,price:s.price,amount:s.amount}); o.qty+=-s.qty; o.amount+=s.amount; });
+  const payments = Object.values(pays).map(o=>({...o, refunded: rids.has(o.payId)})).sort((a,b)=>a.time<b.time?1:-1);
+  const bp = {};
+  sales.forEach(s=>{ const o = bp[s.code] ||= {code:s.code,name:s.name,qty:0,amount:0}; o.qty+=-s.qty; o.amount+=s.amount; });
+  refunds.forEach(r=>{ const o=bp[r.code]; if(o){ o.qty-=r.qty; o.amount+=r.amount; } });
+  const gross = sales.reduce((s,x)=>s+x.amount,0), ref = refunds.reduce((s,x)=>s+x.amount,0);
+  const valid = payments.filter(p=>!p.refunded).length, revenue = gross+ref;
+  const mismatch = products.filter(p=>p.actual!==null && p.actual!==p.stock);
+  return { date, payments, byProduct:Object.values(bp).sort((a,b)=>b.qty-a.qty), mismatch, tx,
+    totals:{ payments:valid, qty:Object.values(bp).reduce((s,x)=>s+x.qty,0), revenue, avg: valid?Math.round(revenue/valid):0,
+      refund:-ref, received: tx.filter(t=>t.type==='입고').reduce((s,x)=>s+x.qty,0), mismatch: mismatch.length } };
+}
+
+/* ============ 상태 ============ */
+const state = { products: [], todayTx: [] };
+let cart = {};           // code -> qty
+let inCart = {};         // 입고 목록
+let stockFilter = 'all';
+
+const isBad = p => p.actual !== null && p.actual !== undefined && p.actual !== '' && Number(p.actual) !== Number(p.stock);
+const isLow = p => p.safety !== null && p.safety !== '' && p.safety !== undefined && p.stock > 0 && p.stock <= p.safety;
+
+async function refresh(){
+  $('modeBadge').textContent = isDemo() ? '샘플 모드' : '구글 시트 연결됨';
+  $('modeBadge').className = 'badge' + (isDemo()?' demo':'');
+  try{
+    const r = await api('load');
+    state.todayTx = r.tx || [];
+    renderAll();
+  }catch(e){ $('modeBadge').textContent = '연결 오류'; }
+}
+function renderAll(){ renderSaleGrid(); renderCart(); renderStock(); renderInSelect(); renderToday(); }
+
+/* ============ 판매 ============ */
+function matches(p, q){ q=q.trim().toLowerCase(); return !q || p.name.toLowerCase().includes(q) || p.code.toLowerCase().includes(q) || String(p.barcode||'').includes(q); }
+
+function renderSaleGrid(){
+  const q = $('saleSearch').value;
+  const list = state.products.filter(p=>matches(p,q));
+  $('saleGrid').innerHTML = list.map(p=>`
+    <button class="pbtn ${p.stock<=0?'out':''} ${isBad(p)?'bad':''}" onclick="addCart('${esc(p.code)}')">
+      <div class="n">${esc(p.name)}</div>
+      <div class="m"><span>${won(p.price)}</span><span>재고 ${p.stock}${isBad(p)?' ⚠':''}</span></div>
+    </button>`).join('') || '<p class="muted">상품이 없습니다. 입고·상품 탭에서 추가하세요.</p>';
+}
+$('saleSearch').addEventListener('input', renderSaleGrid);
+$('saleSearch').addEventListener('keydown', e=>{
+  if(e.key!=='Enter') return;
+  const q = e.target.value.trim();
+  const exact = state.products.find(p=>p.barcode===q || p.code===q);
+  const list = state.products.filter(p=>matches(p,q));
+  const hit = exact || (list.length===1 ? list[0] : null);
+  if(hit){ addCart(hit.code); e.target.value=''; renderSaleGrid(); }
+});
+
+function addCart(code, d=1){
+  const p = state.products.find(x=>x.code===code); if(!p) return;
+  const n = (cart[code]||0) + d;
+  if(n<=0) delete cart[code]; else cart[code]=n;
+  if(d>0 && n>p.stock) toast(`${p.name}: 전산재고(${p.stock})보다 많이 담았어요`, true);
+  renderCart();
+}
+function renderCart(){
+  const codes = Object.keys(cart);
+  let total = 0;
+  $('cart').innerHTML = codes.length ? codes.map(c=>{
+    const p = state.products.find(x=>x.code===c); if(!p) return '';
+    total += p.price*cart[c];
+    return `<div class="cart-line"><div class="grow"><div>${esc(p.name)}</div><div class="small muted">${won(p.price)}</div></div>
+      <div class="qty"><button onclick="addCart('${esc(c)}',-1)">−</button><span>${cart[c]}</span><button onclick="addCart('${esc(c)}',1)">+</button></div>
+      <div class="num" style="width:78px">${won(p.price*cart[c])}</div></div>`;
+  }).join('') : '<p class="muted">왼쪽에서 상품을 눌러 담으세요.</p>';
+  $('cartTotal').textContent = won(total);
+  $('payBtn').disabled = !codes.length;
+}
+document.querySelectorAll('#payMethod button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#payMethod button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+});
+async function checkout(){
+  const items = Object.entries(cart).map(([code,qty])=>({code,qty}));
+  if(!items.length) return;
+  const method = document.querySelector('#payMethod .on').textContent;
+  const r = await api('sale', {items, method});
+  cart = {};
+  toast(`결제 완료 ${won(r.total)} · ${r.payId}`);
+  refresh();
+}
+function renderToday(){
+  const s = summarize(state.todayTx, state.products, kstDate()).totals;
+  $('todayLine').textContent = `오늘: 결제 ${s.payments}건 · ${s.qty}개 · ${won(s.revenue)}`;
+}
+
+/* ============ 재고 ============ */
+document.querySelectorAll('#stockFilter button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#stockFilter button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); stockFilter=b.dataset.f; renderStock();
+});
+$('stockSearch').addEventListener('input', renderStock);
+
+function renderStock(){
+  const bad = state.products.filter(isBad);
+  $('navBad').innerHTML = bad.length ? `<span class="dot">${bad.length}</span>` : '';
+  $('mismatchAlert').innerHTML = bad.length
+    ? `<div class="alert">⚠ 재고가 맞지 않는 상품 ${bad.length}개 — 다시 세어 확인해 주세요. (${bad.slice(0,3).map(p=>esc(p.name)).join(', ')}${bad.length>3?' 외':''})</div>` : '';
+  const q = $('stockSearch').value;
+  const f = {all:()=>true, bad:isBad, low:isLow, out:p=>p.stock<=0, uncounted:p=>p.actual===null||p.actual===''}[stockFilter];
+  const list = state.products.filter(p=>matches(p,q) && f(p));
+  $('stockBody').innerHTML = list.map(p=>{
+    const has = !(p.actual===null||p.actual===''||p.actual===undefined);
+    const diff = has ? p.actual - p.stock : '';
+    const tags = (p.stock<=0?'<span class="tag red">품절</span>':'') + (isLow(p)?'<span class="tag warn">부족</span>':'') + (isBad(p)?'<span class="tag red">재확인</span>':'');
+    return `<tr class="${isBad(p)?'bad':''}">
+      <td class="name">${esc(p.name)}${tags}<div class="small muted">${esc(p.code)}${p.countedAt?' · 실사 '+esc(p.countedAt):''}</div></td>
+      <td class="num col-price">${(p.price||0).toLocaleString()}</td>
+      <td class="num"><b>${p.stock}</b></td>
+      <td class="num"><input type="number" inputmode="numeric" value="${has?p.actual:''}" placeholder="-" onchange="setCount('${esc(p.code)}', this.value)"></td>
+      <td class="num">${diff===''?'':(diff>0?'+':'')+diff}</td>
+      <td>${isBad(p)?`<button class="btn sm" onclick="adjust('${esc(p.code)}')">맞추기</button>`:''}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">해당 상품이 없습니다.</td></tr>';
+}
+async function setCount(code, v){
+  await api('count', {code, actual: v===''?null:Number(v)});
+  const p = state.products.find(x=>x.code===code);
+  if(p && isBad(p)) toast(`${p.name}: 전산 ${p.stock} / 실사 ${p.actual} — 다시 확인해 주세요`, true);
+  renderAll();
+}
+async function adjust(code){
+  const p = state.products.find(x=>x.code===code);
+  if(!confirm(`${p.name}\n전산재고 ${p.stock} → ${p.actual} 로 맞출까요?\n(차이는 '조정'으로 기록됩니다)`)) return;
+  await api('adjust', {code}); toast('전산재고를 맞췄습니다'); refresh();
+}
+
+/* ============ 입고 / 상품 ============ */
+function renderInSelect(){
+  const cur = $('inProduct').value;
+  $('inProduct').innerHTML = state.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)} (재고 ${p.stock})</option>`).join('');
+  if(cur) $('inProduct').value = cur;
+  renderInList();
+}
+function addIn(){
+  const code=$('inProduct').value, q=Number($('inQty').value);
+  if(!code||q<=0) return;
+  inCart[code]=(inCart[code]||0)+q; renderInList();
+}
+function renderInList(){
+  const e = Object.entries(inCart);
+  $('inList').innerHTML = e.map(([c,q])=>{ const p=state.products.find(x=>x.code===c);
+    return `<div class="cart-line"><div class="grow">${esc(p?p.name:c)}</div><b>+${q}</b><button class="btn sm danger" onclick="delete inCart['${esc(c)}'];renderInList()">삭제</button></div>`; }).join('');
+}
+async function submitIn(){
+  const items = Object.entries(inCart).map(([code,qty])=>({code,qty}));
+  if(!items.length) return toast('입고할 상품을 추가하세요', true);
+  await api('receive', {items, memo:$('inMemo').value});
+  inCart={}; $('inMemo').value=''; toast('입고 처리 완료'); refresh();
+}
+async function addProduct(){
+  const product = {code:$('npCode').value.trim(), barcode:$('npBarcode').value.trim(), name:$('npName').value.trim(),
+    price:$('npPrice').value, stock:$('npStock').value, safety:$('npSafety').value};
+  await api('addProduct', {product});
+  ['npCode','npBarcode','npName','npPrice','npStock','npSafety'].forEach(i=>$(i).value='');
+  toast('상품을 추가했습니다'); renderAll();
+}
+
+// 인포스페이스 엑셀: 헤더 행에서 '코드' '코드명' '수량' '현재가' 열을 찾아 읽음
+let pendingImport = [];
+$('xlsFile').addEventListener('change', async e=>{
+  const file = e.target.files[0]; if(!file) return;
+  try{
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const dec = document.createElement('textarea');
+    const unent = v => { const t=String(v); if(!t.includes('&')) return t; dec.innerHTML=t; return dec.value; }; // 인포스페이스 xls는 글자가 &#...; 로 저장됨
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:false, defval:''}).map(r=>r.map(unent));
+    const hi = rows.findIndex(r=>r.some(c=>String(c).trim()==='코드') && r.some(c=>/코드명|상품명/.test(c)));
+    if(hi<0) throw new Error('헤더(코드/코드명)를 찾지 못했습니다');
+    const h = rows[hi].map(c=>String(c).trim());
+    const ci = {code:h.indexOf('코드'), name:h.findIndex(c=>/코드명|상품명/.test(c)),
+      qty:h.findIndex(c=>/^수량/.test(c)), price:h.findIndex(c=>/현재가$|판매가/.test(c)), barcode:h.findIndex(c=>/Maker|바코드/.test(c))};
+    const n = v => Number(String(v).replace(/,/g,'')) || 0;
+    pendingImport = rows.slice(hi+1)
+      .filter(r=>r[ci.code] && !/^(코드|합계)$/.test(String(r[ci.code]).trim()))
+      .map(r=>({code:String(r[ci.code]).trim(), name:String(r[ci.name]).trim(), stock:n(r[ci.qty]),
+        price: ci.price>=0 ? n(r[ci.price]) : null, barcode: ci.barcode>=0 ? String(r[ci.barcode]).trim() : ''}));
+    const m = {}; state.products.forEach(p=>m[p.code]=p);
+    const changed = pendingImport.filter(x=>m[x.code] && m[x.code].stock!==x.stock);
+    const added = pendingImport.filter(x=>!m[x.code]);
+    $('importPreview').innerHTML = `<p>${pendingImport.length}개 상품 읽음 · 수량 변경 <b>${changed.length}</b> · 신규 <b>${added.length}</b></p>
+      ${changed.slice(0,20).map(x=>`<div class="small">${esc(x.name)}: ${m[x.code].stock} → <b>${x.stock}</b></div>`).join('')}
+      <button class="btn primary" style="margin-top:8px" onclick="doImport()">반영하기</button>`;
+  }catch(err){ toast(err.message, true); }
+});
+async function doImport(){
+  const r = await api('importProducts', {products: pendingImport});
+  toast(`반영 완료 · 갱신 ${r.updated} · 신규 ${r.added}`);
+  $('importPreview').innerHTML=''; $('xlsFile').value=''; refresh();
+}
+
+/* ============ 리포트 ============ */
+$('repDate').value = kstDate();
+function shiftDate(d){ const t=new Date($('repDate').value+'T00:00:00Z'); t.setUTCDate(t.getUTCDate()+d); $('repDate').value=t.toISOString().slice(0,10); loadReport(); }
+$('repDate').addEventListener('change', loadReport);
+async function loadReport(){
+  const date = $('repDate').value;
+  const r = await api('report', {date});
+  const t = r.totals;
+  $('archInfo').textContent = r.archived ? `✔ '${date}' 시트로 보관되어 있습니다.` : '아직 날짜 시트로 보관되지 않았습니다.';
+  $('kpis').innerHTML = [
+    ['결제 건수', t.payments+'건'], ['판매 수량', t.qty+'개'], ['매출', won(t.revenue)],
+    ['결제당 평균', won(t.avg)], ['환불', won(t.refund)], ['입고 수량', t.received+'개'],
+  ].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')
+   + `<div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치 (현재)</div><div class="v">${t.mismatch}개</div></div>`;
+  const today = date === kstDate();
+  $('payList').innerHTML = r.payments.map(p=>`
+    <details class="pay"><summary>
+      <span class="grow ${p.refunded?'refunded':''}"><b>${esc(p.time.slice(11,16))}</b> · ${esc(p.method||'-')} · ${p.qty}개
+        <span class="small muted">${esc(p.items.map(i=>i.name).join(', ')).slice(0,40)}</span></span>
+      <b class="${p.refunded?'refunded':''}">${won(p.amount)}</b>${p.refunded?'<span class="tag red">환불</span>':''}
+    </summary>
+    <div class="items">${p.items.map(i=>`${esc(i.name)} × ${i.qty} = ${won(i.amount)}`).join('<br>')}
+      <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
+      ${!p.refunded?`<button class="btn sm danger" style="margin-top:6px" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button>`:''}
+    </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
+  $('prodSales').innerHTML = r.byProduct.filter(p=>p.qty||p.amount).map(p=>`<tr><td>${esc(p.name)}</td><td class="num">${p.qty}</td><td class="num">${won(p.amount)}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="muted">판매 없음</td></tr>';
+}
+async function refund(payId){
+  if(!confirm(`${payId} 결제를 환불할까요?\n판매된 수량이 재고로 되돌아갑니다.`)) return;
+  await api('refund', {payId}); toast('환불 처리했습니다'); loadReport(); refresh();
+}
+async function exportNow(){
+  const date = $('repDate').value;
+  const r = await api('exportNow', {date});
+  toast(r.demo ? '샘플 모드에서는 시트로 내보내지 않습니다' : `'${date}' 시트로 내보냈습니다`);
+  loadReport();
+}
+
+/* ============ 설정 / 탭 ============ */
+function fillCfg(){ $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin; $('cfgStaff').value=cfg.staff; }
+function saveCfg(){
+  cfg = {url:$('cfgUrl').value.trim(), pin:$('cfgPin').value.trim(), staff:$('cfgStaff').value.trim()};
+  LS.set('cfg', cfg); toast('저장했습니다'); refresh();
+}
+function clearCfg(){ cfg={url:'',pin:'',staff:cfg.staff}; LS.set('cfg',cfg); fillCfg(); refresh(); }
+
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  $('v-'+b.dataset.v).classList.add('on');
+  if(b.dataset.v==='report') loadReport();
+  window.scrollTo(0,0);
+});
+
+fillCfg();
+refresh();
+</script>
+</body>
+</html>
