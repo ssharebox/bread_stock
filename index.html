@@ -784,7 +784,7 @@ async function testConn(){
   try{
     const t0 = Date.now();
     const r = await fetch(url, {redirect:'follow'}); const txt = await r.text();
-    if(/재고 API 동작 중/.test(txt)) log(`✔ 웹앱 응답 정상 (${((Date.now()-t0)/1000).toFixed(1)}초)`);
+    if(/재고 API 동작 중/.test(txt)){ const v=(txt.match(/"version":"([^"]+)/)||[])[1]; log(`✔ 웹앱 응답 정상 (${((Date.now()-t0)/1000).toFixed(1)}초) · 코드 버전: ${v||'구버전 → Code.gs를 새 버전으로 다시 배포하세요'}`); }
     else { log('✖ 웹앱이 예상과 다른 응답을 줬습니다 → Code.gs가 최신인지, 새 버전으로 배포했는지 확인'); log(txt.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,200)); return; }
   }catch(e){ log('✖ 접속 실패 → 배포 > 액세스 권한을 “모든 사용자”로 바꾸고 새 버전으로 배포하세요'); return; }
   log('2) PIN · 시트 확인…');
