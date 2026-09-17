@@ -6,6 +6,8 @@
 <title>브레드이발소 재고관리</title>
 <meta name="theme-color" content="#7a4a22">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍞</text></svg>">
+<link rel="preconnect" href="https://script.google.com" crossorigin>
+<link rel="preconnect" href="https://script.googleusercontent.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -217,11 +219,9 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
         <h2>이번 결제</h2>
         <div id="cart"><p class="muted">왼쪽에서 상품을 눌러 담으세요.</p></div>
         <div class="total"><span>합계</span><span id="cartTotal">0원</span></div>
-        <div class="seg" id="payMethod">
-          <button class="on">카드</button><button>현금</button><button>계좌이체</button><button>기타</button>
-        </div>
+
         <div style="height:10px"></div>
-        <button class="btn primary big" id="payBtn" onclick="checkout()">결제 완료 · 재고 차감</button>
+        <button class="btn primary big" id="payBtn" onclick="checkout()">카드 결제 완료 · 재고 차감</button>
         <button class="btn sm" style="margin-top:8px" onclick="cart={};renderCart()">비우기</button>
         <p class="small muted" id="todayLine" style="margin-bottom:0"></p>
       </div>
@@ -417,7 +417,7 @@ async function api(action, data={}, opts={}){
         text = await r.text();
       }finally{ clearTimeout(timer); }
       try{ res = JSON.parse(text); }
-      catch(_){ throw new Error(/<html|<!DOCTYPE/i.test(text) ? '웹앱이 JSON 대신 로그인/오류 페이지를 돌려줬습니다 → 배포 액세스 권한을 “모든 사용자”로 설정했는지 확인하세요' : '응답을 읽을 수 없습니다: ' + text.slice(0,80)); }
+      catch(_){ if(/<html|<!DOCTYPE/i.test(text)){ const g = explainGooglePage(text); throw new Error(`구글 오류 페이지: ${g.fix}`); } throw new Error('응답을 읽을 수 없습니다: ' + text.slice(0,80)); }
     }
     if(!res.ok) throw new Error(res.error || '실패');
     if(res.products && !opts.noApply){ state.products = res.products; state.serverProducts = JSON.parse(JSON.stringify(res.products)); }
@@ -437,6 +437,26 @@ async function api(action, data={}, opts={}){
     if(!opts.quiet) toast(msg, true);
     throw new Error(msg);
   }finally{ if(!opts.quiet) busy(false); }
+}
+
+
+// 구글이 JSON 대신 돌려준 HTML 오류 페이지에서 사람이 읽을 문장만 뽑고, 원인별 해결 방법을 붙임
+function explainGooglePage(html){
+  let text = '';
+  try{
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script,style,noscript').forEach(n=>n.remove());
+    text = (doc.title + ' ' + doc.body.innerText).replace(/\s+/g,' ').trim();
+  }catch(_){ text = String(html).replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim(); }
+  const t = text.toLowerCase();
+  let fix = 'Apps Script 왼쪽 메뉴 [실행]에서 빨간 오류 기록을 확인해 주세요';
+  if(/authoriz|권한|승인|permission/.test(t)) fix = '새 코드에 필요한 권한이 아직 승인되지 않았습니다 → Apps Script에서 setup 실행 → 권한 허용 → [배포 관리 → 새 버전]';
+  else if(/function not found|함수를 찾을 수|dopost|doget/.test(t)) fix = 'Code.gs가 저장되지 않았거나 비어 있습니다 → 코드 붙여넣기 후 저장 → [배포 관리 → 새 버전]';
+  else if(/not found|찾을 수 없|404/.test(t)) fix = '웹앱 주소가 없어졌습니다 → [배포 관리]에서 웹앱 URL을 다시 복사해 설정 탭에 넣어 주세요';
+  else if(/sign in|로그인|accounts\.google/.test(t)) fix = '배포 액세스가 “모든 사용자”가 아닙니다 → [배포 관리 → 수정 → 액세스: 모든 사용자]';
+  else if(/too many|quota|할당량|exceeded/.test(t)) fix = '구글 사용량 한도에 걸렸습니다 → 잠시 후 다시 시도';
+  else if(/unable to open|열 수 없|server error|오류가 발생/.test(t)) fix = '구글 쪽 일시 오류이거나 스크립트 오류입니다 → Apps Script [실행] 기록 확인';
+  return {text: text.slice(0,160), fix};
 }
 
 /* ============ 샘플(데모) 백엔드 — 서버와 같은 규칙 ============ */
@@ -734,7 +754,7 @@ async function refresh(){
       $('modeBadge').textContent = '연결 오류';
       $('saleGrid').innerHTML = `<div class="alert">연결 오류: ${esc(e.message)}<br><span class="small">잠시 후 자동으로 다시 시도합니다. 계속되면 설정 탭의 “연결 테스트”를 눌러 주세요.</span></div>`;
     }
-    if(!/비밀번호|예전 코드/.test(e.message)) retryTimer = setTimeout(refresh, 20000);   // 20초 뒤 자동 재시도
+    if(!/비밀번호|예전 코드|구글 오류 페이지/.test(e.message)) retryTimer = setTimeout(refresh, 20000);   // 20초 뒤 자동 재시도
   }finally{ refreshing = false; }
 }
 function renderAll(){ renderSaleGrid(); renderCart(); renderStock(); renderInSelect(); renderToday(); }
@@ -787,13 +807,11 @@ function renderCart(){
   $('cartBarTxt').textContent = `담은 상품 ${cnt}개`; $('cartBarSum').textContent = won(total);
   $('payBtn').disabled = !codes.length;
 }
-document.querySelectorAll('#payMethod button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#payMethod button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-});
+
 async function checkout(){
   const items = Object.entries(cart).map(([code,qty])=>({code,qty}));
   if(!items.length) return;
-  const method = document.querySelector('#payMethod .on').textContent;
+  const method = '카드';
   const payId = newPayId();
   const total = items.reduce((s,it)=>s + (state.products.find(p=>p.code===it.code)?.price||0)*it.qty, 0);
   enqueue('sale', {items, method, payId, staff: cfg.staff});
@@ -1061,6 +1079,27 @@ function stopCam(){ try{ camControls && camControls.stop(); }catch(_){} camContr
 function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
 document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
 
+
+/* ============ 30초마다 구글 시트 깨우기 ============ */
+// 구글 웹앱은 한동안 요청이 없으면 잠들어 첫 응답이 느려집니다.
+// 화면이 열려 있는 동안 30초마다 가벼운 요청을 보내 깨어 있게 합니다.
+let pinging = false, lastPingOk = null;
+async function wakePing(){
+  if(pinging || isDemo() || !cfg.url || document.hidden || document.body.classList.contains('locked')) return;
+  pinging = true;
+  const ctl = new AbortController(); const timer = setTimeout(()=>ctl.abort(), 15000);
+  try{
+    const r = await fetch(cfg.url, {cache:'no-store', signal: ctl.signal});
+    const j = await r.json();
+    const ok = !!(j && j.ok);
+    if(ok && lastPingOk === false && $('modeBadge').textContent.startsWith('⚠')) refresh();   // 다시 연결되면 최신 숫자 받기
+    lastPingOk = ok;
+  }catch(_){ lastPingOk = false; }
+  finally{ clearTimeout(timer); pinging = false; }
+}
+setInterval(wakePing, 30000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) wakePing(); });
+
 /* ============ 설정 / 탭 ============ */
 function renderSyncSeg(){ document.querySelectorAll('#syncSeg button').forEach(b=>b.classList.toggle('on', b.dataset.m===syncMode())); }
 document.querySelectorAll('#syncSeg button').forEach(b=>b.onclick=()=>{
@@ -1088,7 +1127,7 @@ async function testConn(){
       log(`   · 코드 버전: ${j.version || '없음 → 이 웹앱은 예전 코드입니다. 새 Code.gs로 배포하세요'}`);
       log(`   · 연결된 구글 시트: ${j.sheet || '알 수 없음(예전 코드)'}`);
     }
-    else { log('✖ 웹앱이 예상과 다른 응답을 줬습니다 → Code.gs가 최신인지, 새 버전으로 배포했는지 확인'); log(txt.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,200)); return; }
+    else { const g = explainGooglePage(txt); log('✖ 구글이 오류 페이지를 돌려줬습니다'); log('   · 내용: ' + g.text); log('   · 해결: ' + g.fix); return; }
   }catch(e){ log('✖ 접속 실패 → 배포 > 액세스 권한을 “모든 사용자”로 바꾸고 새 버전으로 배포하세요'); return; }
   log('2) PIN · 시트 확인…');
   try{
