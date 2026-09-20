@@ -199,6 +199,7 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
     <button class="btn sm" onclick="openCam()" title="카메라로 바코드 찍기">📷<span class="lbl"> 카메라 스캔</span></button>
     <button class="btn sm" onclick="refresh()" title="새로고침">↻<span class="lbl"> 새로고침</span></button>
     <a class="btn sm" href="manual.html" target="_blank" rel="noopener" style="text-decoration:none" title="사용법">❓<span class="lbl"> 사용법</span></a>
+    <button class="btn sm" onclick="openClose('open')" title="오픈 실사 저장">🌅<span class="lbl"> 오픈 점검</span></button>
     <button class="btn sm primary" onclick="openClose()" title="오늘 기록을 구글 시트에 업로드하고 마감">🏁<span class="lbl"> 마감하기</span><span id="closeBtnCount"></span></button>
     <button class="btn sm" onclick="lockNow()" title="화면 잠금 / 담당자 변경">🔒<span class="lbl"> 잠금</span></button>
   </div>
@@ -233,6 +234,25 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
   <!-- 재고 -->
   <section class="view" id="v-stock">
     <div id="mismatchAlert"></div>
+    <div class="card" id="bcCard">
+      <div class="row">
+        <b class="grow">🔎 바코드 점검</b>
+        <button class="btn sm" id="bcToggle" onclick="toggleBarcodeCheck()">점검 시작</button>
+      </div>
+      <p class="small muted" id="bcHelp" style="margin:8px 0 0">상품에 붙은 바코드를 하나씩 찍어, 시스템에 등록된 바코드와 같은지 확인합니다.</p>
+      <div id="bcPanel" hidden style="margin-top:12px">
+        <input id="bcScan" type="search" placeholder="상품 바코드를 찍으세요 (직접 입력 후 Enter도 가능)" autocomplete="off">
+        <div class="kpis" id="bcStats" style="margin:12px 0"></div>
+        <div id="bcUnknown"></div>
+        <div id="bcRecent" class="small" style="margin-top:8px"></div>
+        <details style="margin-top:10px"><summary class="small muted" style="cursor:pointer">아직 확인하지 않은 상품 보기</summary>
+          <div id="bcMissing" class="small" style="margin-top:6px"></div></details>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" onclick="finishBarcodeCheck()">점검 끝내고 기록 남기기</button>
+          <button class="btn" onclick="toggleBarcodeCheck(false)">닫기</button>
+        </div>
+      </div>
+    </div>
     <div class="card">
       <input id="stockSearch" type="search" placeholder="상품명·코드 검색">
       <div class="chips" id="stockFilter">
@@ -242,7 +262,7 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
         <button data-f="out">품절</button>
         <button data-f="uncounted">실사 안 함</button>
       </div>
-      <p class="small muted" style="margin:0 0 8px">실사 칸에 매장에서 직접 센 수량을 입력하세요. 전산재고와 다르면 <b style="color:var(--bad)">빨간색</b>으로 표시됩니다.</p>
+      <p class="small muted" style="margin:0 0 8px">실사는 <b>오픈할 때와 마감할 때 하루 두 번</b> 합니다. 직접 센 수량을 실사 칸에 입력하세요. 전산재고와 다르면 <b style="color:var(--bad)">빨간색</b>으로 표시되고, 🌅 오픈 점검 또는 🏁 마감하기를 누르면 전산재고가 실사에 맞춰진 뒤 실사 칸이 비워집니다.</p>
       <div class="tbl-wrap">
         <table class="inv">
           <thead><tr><th>상품</th><th class="num col-price">판매가</th><th class="num">전산</th><th class="num">실사</th><th class="num">차이</th><th></th></tr></thead>
@@ -369,17 +389,19 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
   <div class="row" style="margin-bottom:10px"><b class="grow" id="closeTitle" style="font-size:18px">🏁 오늘 마감하기</b>
     <button class="btn sm" onclick="hideClose()">닫기</button></div>
   <div id="closeSum"></div>
+  <div id="closeCount" style="margin:12px 0 0"></div>
   <p id="closePending" style="margin:12px 0 4px"></p>
   <p id="closeMsg" class="small" style="margin:4px 0 10px;min-height:18px"></p>
-  <div id="closeActions" class="row">
+  <div id="closeActions">
+    <label class="row small" style="gap:8px;margin-bottom:10px;cursor:pointer">
+      <input type="checkbox" id="closeAdjust" checked style="width:auto">
+      <span>실사 수량으로 전산재고 맞추기 (차이는 ‘조정’으로 기록되고, 실사 칸은 비워집니다)</span>
+    </label>
     <button class="btn primary big" id="closeGo" onclick="runClose()">업로드하고 마감</button>
   </div>
   <div id="closeDone" hidden>
     <p id="closeDoneTxt" style="margin:0 0 12px"></p>
-    <div class="row">
-      <button class="btn primary grow" onclick="hideClose();lockNow()">🔒 잠그고 끝내기</button>
-      <button class="btn grow" onclick="hideClose()">계속 판매하기</button>
-    </div>
+    <div class="row" id="closeDoneBtns"></div>
   </div>
 </div></div>
 <div id="toast"></div>
@@ -672,53 +694,173 @@ async function pump(){
 window.addEventListener('online', ()=>pump());
 window.addEventListener('beforeunload', e=>{ if(outbox.length){ e.preventDefault(); e.returnValue=''; } });
 
+
+/* ============ 바코드 점검 ============ */
+// 상품에 붙은 실제 바코드를 찍어, 시스템에 등록된 바코드와 맞는지 확인합니다.
+let bcMode = false, bcChecked = new Set(), bcUnknown = [], bcRecent = [];
+function toggleBarcodeCheck(force){
+  bcMode = force === false ? false : (force === true ? true : !bcMode);
+  $('bcPanel').hidden = !bcMode;
+  $('bcToggle').textContent = bcMode ? '점검 중…' : '점검 시작';
+  $('bcToggle').classList.toggle('primary', bcMode);
+  $('bcHelp').textContent = bcMode
+    ? '상품 바코드를 하나씩 찍으세요. 등록된 상품이면 ✓, 등록되지 않은 바코드면 어느 상품인지 골라 바로 등록할 수 있습니다.'
+    : '상품에 붙은 바코드를 하나씩 찍어, 시스템에 등록된 바코드와 같은지 확인합니다.';
+  if(bcMode){ setTimeout(()=>$('bcScan').focus(), 50); }
+  renderBarcodeCheck();
+}
+function bcVerify(code){
+  code = String(code).trim(); if(!code) return;
+  const hits = state.products.filter(p=>!isTicket(p) && p.barcode === code);
+  if(hits.length === 1){
+    bcChecked.add(hits[0].code); beep(true);
+    bcRecent.unshift({ok:true, text:`✓ ${hits[0].name}`});
+  }else if(hits.length > 1){
+    hits.forEach(h=>bcChecked.add(h.code)); beep(false);
+    bcRecent.unshift({ok:false, text:`⚠ 같은 바코드 상품 ${hits.length}개: ${hits.map(h=>h.name).join(', ')}`});
+    toast(`바코드 ${code}가 상품 ${hits.length}개에 등록돼 있습니다`, true);
+  }else{
+    beep(false);
+    if(!bcUnknown.includes(code)) bcUnknown.push(code);
+    bcRecent.unshift({ok:false, text:`✖ 등록되지 않은 바코드 ${code}`});
+  }
+  bcRecent = bcRecent.slice(0,6);
+  renderBarcodeCheck();
+}
+function renderBarcodeCheck(){
+  if(!bcMode) return;
+  const withBc = state.products.filter(p=>!isTicket(p) && p.barcode);
+  const noBc = state.products.filter(p=>!isTicket(p) && !p.barcode);
+  const done = withBc.filter(p=>bcChecked.has(p.code));
+  const missing = withBc.filter(p=>!bcChecked.has(p.code));
+  $('bcStats').innerHTML = `
+    <div class="kpi"><div class="l">확인한 상품</div><div class="v">${done.length} / ${withBc.length}</div></div>
+    <div class="kpi ${bcUnknown.length?'bad':''}"><div class="l">등록 안 된 바코드</div><div class="v">${bcUnknown.length}개</div></div>
+    <div class="kpi ${noBc.length?'bad':''}"><div class="l">바코드 없는 상품</div><div class="v">${noBc.length}개</div></div>`;
+  const opts = state.products.filter(p=>!isTicket(p))
+    .map(p=>`<option value="${esc(p.code)}">${esc(p.name)}${p.barcode?' (등록됨)':' — 바코드 없음'}</option>`).join('');
+  $('bcUnknown').innerHTML = bcUnknown.length ? bcUnknown.map((bc,i)=>`
+    <div class="cart-line">
+      <div class="grow"><b class="mono">${esc(bc)}</b><div class="small muted">어느 상품인가요?</div></div>
+      <select id="bcSel${i}" style="max-width:280px">${opts}</select>
+      <button class="btn sm" onclick="assignBarcode(${i})">이 상품에 등록</button>
+      <button class="btn sm danger" onclick="bcUnknown.splice(${i},1);renderBarcodeCheck()">무시</button>
+    </div>`).join('') : '';
+  $('bcRecent').innerHTML = bcRecent.map(r=>`<div style="color:${r.ok?'var(--ok,#2f7d4f)':'var(--bad)'}">${esc(r.text)}</div>`).join('');
+  $('bcMissing').innerHTML = (missing.length ? missing.map(p=>`· ${esc(p.name)} <span class="mono muted">${esc(p.barcode)}</span>`).join('<br>') : '모두 확인했습니다.')
+    + (noBc.length ? `<div style="margin-top:8px">바코드가 등록되지 않은 상품: ${noBc.map(p=>esc(p.name)).join(', ')}</div>` : '');
+}
+async function assignBarcode(i){
+  const bc = bcUnknown[i], code = $('bcSel'+i).value;
+  const p = state.products.find(x=>x.code===code);
+  if(!confirm(`${p.name}\n바코드를 ${p.barcode ? p.barcode + ' → ' : ''}${bc} 로 등록할까요?`)) return;
+  try{
+    await api('setBarcode', {code, barcode: bc});
+    bcUnknown.splice(i,1); bcChecked.add(code);
+    bcRecent.unshift({ok:true, text:`✓ ${p.name}에 ${bc} 등록`});
+    toast(`${p.name}에 바코드를 등록했습니다`);
+    renderAll(); renderBarcodeCheck();
+  }catch(e){ /* api가 이미 알림 */ }
+}
+async function finishBarcodeCheck(){
+  const withBc = state.products.filter(p=>!isTicket(p) && p.barcode);
+  const missing = withBc.filter(p=>!bcChecked.has(p.code)).map(p=>p.code);
+  try{
+    if(!isDemo()) await api('barcodeCheck', {checked:[...bcChecked], missing, unknown:bcUnknown}, {noApply:true});
+    toast(`바코드 점검 기록을 저장했습니다 (확인 ${bcChecked.size} · 미확인 ${missing.length} · 미등록 ${bcUnknown.length})`);
+  }catch(e){ return; }
+  bcChecked = new Set(); bcUnknown = []; bcRecent = [];
+  toggleBarcodeCheck(false);
+}
+$('bcScan').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); bcVerify(e.target.value); e.target.value=''; } });
+
 /* ============ 마감하기 ============ */
-function openClose(){
+let sessionKind = 'close';
+function openClose(kind){
+  sessionKind = kind === 'open' ? 'open' : 'close';
+  const open = sessionKind === 'open';
+  $('closeTitle').textContent = open ? '🌅 오픈 점검 (실사)' : '🏁 오늘 마감하기';
   const t = summarize(state.todayTx, state.products, kstDate()).totals;
-  $('closeSum').innerHTML = `
+  $('closeSum').hidden = open;
+  $('closeSum').innerHTML = open ? '' : `
     <div class="kpis" style="margin:0">
       <div class="kpi"><div class="l">오늘 결제</div><div class="v">${t.payments}건</div></div>
-      <div class="kpi"><div class="l">판매 수량</div><div class="v">${t.qty}개</div></div>
+      <div class="kpi"><div class="l">굿즈 수량</div><div class="v">${t.qty-(t.ticketQty||0)}개</div></div>
+      <div class="kpi"><div class="l">체험 인원</div><div class="v">${t.ticketQty||0}명</div></div>
       <div class="kpi"><div class="l">매출</div><div class="v">${won(t.revenue)}</div></div>
-      <div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치</div><div class="v">${t.mismatch}개</div></div>
     </div>`;
+
+  const counted = state.products.filter(p=>!isTicket(p) && p.actual!==null && p.actual!==undefined && p.actual!=='');
+  const diffs = counted.filter(isBad);
+  const label = open ? '오픈 실사' : '마감 실사';
+  $('closeCount').innerHTML = counted.length
+    ? `<div class="note ${diffs.length?'red':''}"><p><b>${label}</b> · 입력한 상품 ${counted.length}개 중 <b>${diffs.length}개</b>가 전산과 다릅니다.</p>${
+        diffs.length ? '<p class="small">' + diffs.slice(0,6).map(p=>`${esc(p.name)} 전산 ${p.stock} → 실사 ${p.actual}`).join('<br>') + (diffs.length>6?'<br>…':'') + '</p>' : ''}</div>`
+    : `<div class="note"><p><b>${label}</b> · 아직 실사 수량을 입력하지 않았습니다. 재고 탭에서 세어 입력한 뒤 눌러 주세요.</p></div>`;
+
   const n = outbox.length;
   $('closePending').innerHTML = n
     ? `이 기기에 아직 업로드하지 않은 기록이 <b>${n}건</b> 있습니다.`
     : `업로드할 기록이 없습니다. 모든 기록이 구글 시트에 저장되어 있습니다.`;
-  $('closeMsg').textContent = t.mismatch ? '⚠ 재고가 맞지 않는 상품이 있습니다. 가능하면 확인 후 마감하세요.' : '';
-  $('closeMsg').className = 'small' + (t.mismatch ? ' warnText' : '');
-  $('closeGo').disabled = false; $('closeGo').textContent = n ? `업로드하고 마감 (${n}건)` : '마감하기';
+  $('closeMsg').textContent = '';
+  $('closeMsg').className = 'small';
+  $('closeGo').disabled = false;
+  $('closeGo').textContent = open
+    ? (n ? `업로드하고 오픈 점검 저장 (${n}건)` : '오픈 점검 저장')
+    : (n ? `업로드하고 마감 (${n}건)` : '마감하기');
   $('closeDone').hidden = true; $('closeActions').hidden = false;
   $('closeModal').classList.add('on');
 }
+
 function hideClose(){ $('closeModal').classList.remove('on'); }
 async function runClose(){
+  const open = sessionKind === 'open';
   const btn = $('closeGo'); btn.disabled = true;
   const msg = $('closeMsg'); msg.className = 'small';
   try{
     if(isDemo()){ msg.textContent = '샘플 모드에서는 구글 시트에 업로드하지 않습니다.'; }
     const total = outbox.length;
-    msg.textContent = total ? `업로드 중… 0 / ${total}` : '마감 처리 중…';
-    const r = await uploadAll((done, left)=>{ msg.textContent = `업로드 중… ${done} / ${total}`; });
+    msg.textContent = total ? `업로드 중… 0 / ${total}` : '처리 중…';
+    const r = await uploadAll((done)=>{ msg.textContent = `업로드 중… ${done} / ${total}`; });
     const days = new Set([...r.days, kstDate()]);
-    msg.textContent = '날짜별 시트 저장 중…';
-    for(const d of [...days].sort()){
-      try{ await api('exportNow', {date:d}, {quiet:true, timeout:90000}); }catch(e){ /* 자정 자동 보관이 다시 처리 */ }
+    if(!open){
+      for(const d of [...days].sort()){
+        if(d === kstDate()) continue;
+        try{ await api('exportNow', {date:d}, {quiet:true, timeout:90000}); }catch(e){ /* 자정 자동 보관이 다시 처리 */ }
+      }
     }
+    msg.textContent = open ? '오픈 실사 반영 중…' : '마감 실사 반영하고 날짜별 시트 저장 중…';
+    let cd = {counted:0, adjusted:[], cleared:0};
+    try{
+      cd = await api('countSession', {kind: open?'open':'close', date: kstDate(), adjust: $('closeAdjust').checked},
+        {quiet:true, noApply:true, timeout:90000});
+      if(cd.products){ state.products = cd.products; state.serverProducts = JSON.parse(JSON.stringify(cd.products));
+        state.todayTx = cd.tx || state.todayTx; state.serverTx = cd.tx || state.serverTx; saveCache(); renderAll(); }
+    }catch(e){ throw new Error('업로드는 끝났지만 실사 반영에 실패했습니다: ' + e.message); }
+
     const fails = r.failed.length ? `<br><span class="warnText">${r.failed.length}건은 반영하지 못했습니다: ${esc(r.failed[0].error)}</span>` : '';
-    $('closeDoneTxt').innerHTML = `✓ 업로드 ${r.saved}건 완료 · <b>${[...days].sort().join(', ')}</b> 시트에 저장했습니다.${fails}`;
+    const adj = cd.adjusted && cd.adjusted.length
+      ? `<br>실사에 맞춰 ${cd.adjusted.length}개 상품의 전산재고를 조정했습니다 (${esc(cd.adjusted.slice(0,3).map(a=>a.name+' '+a.from+'→'+a.to).join(', '))}${cd.adjusted.length>3?' 외':''}).`
+      : (cd.counted ? '<br>실사 수량과 전산재고가 모두 같았습니다.' : '');
+    const cleared = cd.cleared ? `<br>실사 칸 ${cd.cleared}개를 비웠습니다. 다음 점검 때 다시 세어 입력하면 됩니다.` : '';
+    $('closeDoneTxt').innerHTML = open
+      ? `✓ 오픈 점검 저장 완료 · 업로드 ${r.saved}건${adj}${cleared}${fails}`
+      : `✓ 업로드 ${r.saved}건 완료 · <b>${[...days].sort().join(', ')}</b> 시트에 저장했습니다.${adj}${cleared}${fails}`;
+    $('closeDoneBtns').innerHTML = open
+      ? `<button class="btn primary grow" onclick="hideClose()">판매 시작하기</button>`
+      : `<button class="btn primary grow" onclick="hideClose();lockNow()">🔒 잠그고 끝내기</button>
+         <button class="btn grow" onclick="hideClose()">계속 판매하기</button>`;
     $('closeDone').hidden = false; $('closeActions').hidden = true;
-    $('closePending').textContent = '모든 기록이 구글 시트에 저장되었습니다.';
     msg.textContent = '';
     pumpFails = 0; renderSync();
   }catch(e){
     msg.className = 'small warnText';
-    msg.textContent = `업로드하지 못했습니다: ${e.message} — 기록은 이 기기에 그대로 보관되어 있습니다. 인터넷을 확인하고 다시 눌러 주세요. (남은 ${outbox.length}건)`;
+    msg.textContent = `처리하지 못했습니다: ${e.message} — 기록은 이 기기에 그대로 보관되어 있습니다. 인터넷을 확인하고 다시 눌러 주세요. (남은 ${outbox.length}건)`;
     btn.disabled = false; btn.textContent = `다시 시도 (${outbox.length}건)`;
     renderSync();
   }
 }
+
 
 
 let cart = {};           // code -> qty
@@ -1003,7 +1145,7 @@ async function exportNow(){
 // USB/무선 바코드 스캐너는 키보드처럼 숫자를 아주 빠르게 입력하고 Enter를 누릅니다.
 // 어느 탭에서든 이런 빠른 입력을 잡아 현재 탭에 맞게 처리합니다.
 let scanBuf = '', scanLast = 0;
-const SCAN_FIELDS = ['saleSearch','inScan'];
+const SCAN_FIELDS = ['saleSearch','inScan','bcScan'];
 document.addEventListener('keydown', e=>{
   const el = document.activeElement;
   const typing = el && /INPUT|TEXTAREA|SELECT/.test(el.tagName) && !SCAN_FIELDS.includes(el.id);
@@ -1036,6 +1178,7 @@ function currentView(){ return document.querySelector('#nav button.on').dataset.
 
 function handleScan(code){
   code = String(code).trim(); if(!code) return;
+  if(bcMode && currentView()==='stock'){ bcVerify(code); return; }   // 바코드 점검 중
   const dot = $('scanDot'); dot.textContent = '▮▯▮ ' + code; dot.classList.add('hit');
   clearTimeout(dot.h); dot.h = setTimeout(()=>{ dot.classList.remove('hit'); dot.textContent='▮▯▮ 스캐너 대기'; }, 1500);
   const hits = findByScan(code);
