@@ -67,6 +67,8 @@ input[type=text],input[type=number],input[type=search],input[type=date],input[ty
 .pbtn .m{font-size:12px;color:var(--muted);margin-top:4px;display:flex;justify-content:space-between}
 .pbtn.out{opacity:.55}
 .pbtn.bad{border-color:var(--bad-line);background:var(--bad-bg)}
+.pbtn.ticket{border-color:var(--brand);background:var(--brand-soft)}
+.pbtn.ticket .n{font-weight:700;color:var(--brand)}
 .cart-line{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px dashed var(--line)}
 .cart-line:last-child{border-bottom:0}
 .qty{display:flex;align-items:center;gap:4px}
@@ -303,6 +305,13 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
     <div class="card">
       <h2>결제별 판매 <span class="muted small">(누르면 상세)</span></h2>
       <div id="payList"></div>
+    </div>
+    <div class="card" id="ticketCard" hidden>
+      <h2>🎟 체험 티켓 — 시간대별 인원</h2>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>시간</th><th class="num">인원</th><th class="num">금액</th><th>내역</th></tr></thead>
+        <tbody id="ticketHours"></tbody>
+      </table></div>
     </div>
     <div class="card">
       <h2>상품별 판매</h2>
@@ -546,10 +555,19 @@ function summarize(tx, products, date){
   refunds.forEach(r=>{ const o=bp[r.code]; if(o){ o.qty-=r.qty; o.amount+=r.amount; } });
   const gross = sales.reduce((s,x)=>s+x.amount,0), ref = refunds.reduce((s,x)=>s+x.amount,0);
   const valid = payments.filter(p=>!p.refunded).length, revenue = gross+ref;
-  const mismatch = products.filter(p=>p.actual!==null && p.actual!==p.stock);
-  return { date, payments, byProduct:Object.values(bp).sort((a,b)=>b.qty-a.qty), mismatch, tx,
+  const mismatch = products.filter(p=>!isTicket(p) && p.actual!==null && p.actual!==p.stock);
+  const hours = {};
+  sales.filter(s=>isTicket(s)).forEach(s=>{ const h=s.time.slice(11,13)+'시';
+    const o = hours[h] ||= {hour:h, qty:0, amount:0, kinds:{}};
+    o.qty += -s.qty; o.amount += s.amount; o.kinds[s.name] = (o.kinds[s.name]||0) + -s.qty; });
+  refunds.filter(r=>isTicket(r)).forEach(r=>{ const o=hours[r.time.slice(11,13)+'시']; if(!o) return;
+    o.qty -= r.qty; o.amount += r.amount; o.kinds[r.name] = (o.kinds[r.name]||0) - r.qty; });
+  const ticketHours = Object.keys(hours).sort().map(k=>hours[k]);
+  const tk = ticketHours.reduce((a,h)=>({qty:a.qty+h.qty, amount:a.amount+h.amount}), {qty:0, amount:0});
+  return { date, payments, byProduct:Object.values(bp).sort((a,b)=>b.qty-a.qty), mismatch, tx, ticketHours,
     totals:{ payments:valid, qty:Object.values(bp).reduce((s,x)=>s+x.qty,0), revenue, avg: valid?Math.round(revenue/valid):0,
-      refund:-ref, received: tx.filter(t=>t.type==='입고').reduce((s,x)=>s+x.qty,0), mismatch: mismatch.length } };
+      refund:-ref, received: tx.filter(t=>t.type==='입고').reduce((s,x)=>s+x.qty,0), mismatch: mismatch.length,
+      ticketQty: tk.qty, ticketAmount: tk.amount } };
 }
 
 /* ============ 상태 ============ */
@@ -568,11 +586,11 @@ function applyOp(op){
   const d = op.data, find = c => state.products.find(p=>p.code===c);
   if(op.action==='sale'){
     d.items.forEach(it=>{ const p=find(it.code); if(!p) return;
-      p.stock -= it.qty;
+      if(!isTicket(p)) p.stock -= it.qty;
       if(op.time.slice(0,10) === kstDate()) state.todayTx.push({time:op.time, date:op.time.slice(0,10), payId:d.payId, type:'판매', code:p.code, name:p.name,
         qty:-it.qty, price:p.price, amount:p.price*it.qty, method:d.method, staff:d.staff, memo:''}); });
   }else if(op.action==='receive'){
-    d.items.forEach(it=>{ const p=find(it.code); if(p) p.stock += it.qty; });
+    d.items.forEach(it=>{ const p=find(it.code); if(p && !isTicket(p)) p.stock += it.qty; });
   }else if(op.action==='count'){
     const p=find(d.code); if(p){ p.actual = d.actual; p.countedAt = d.actual===null ? '' : op.time.slice(0,16); }
   }
@@ -707,8 +725,9 @@ let cart = {};           // code -> qty
 let inCart = {};         // 입고 목록
 let stockFilter = 'all';
 
-const isBad = p => p.actual !== null && p.actual !== undefined && p.actual !== '' && Number(p.actual) !== Number(p.stock);
-const isLow = p => p.safety !== null && p.safety !== '' && p.safety !== undefined && p.stock > 0 && p.stock <= p.safety;
+const isTicket = p => /^TK/i.test(p.code || p);   // 체험 티켓: 재고 차감 없음
+const isBad = p => !isTicket(p) && p.actual !== null && p.actual !== undefined && p.actual !== '' && Number(p.actual) !== Number(p.stock);
+const isLow = p => !isTicket(p) && p.safety !== null && p.safety !== '' && p.safety !== undefined && p.stock > 0 && p.stock <= p.safety;
 
 let refreshing = false, retryTimer = null;
 function saveCache(){
@@ -764,8 +783,13 @@ function matches(p, q){ q=q.trim().toLowerCase(); return !q || p.name.toLowerCas
 
 function renderSaleGrid(){
   const q = $('saleSearch').value;
-  const list = state.products.filter(p=>matches(p,q));
-  $('saleGrid').innerHTML = list.map(p=>`
+  const list = state.products.filter(p=>matches(p,q))
+    .sort((a,b)=> (isTicket(b)?1:0) - (isTicket(a)?1:0));      // 체험 티켓을 맨 앞에
+  $('saleGrid').innerHTML = list.map(p=> isTicket(p) ? `
+    <button class="pbtn ticket" onclick="addCart('${esc(p.code)}')">
+      <div class="n">🎟 ${esc(p.name.replace(/^체험 티켓 - /,''))}</div>
+      <div class="m"><span>${won(p.price)}</span><span>체험 티켓</span></div>
+    </button>` : `
     <button class="pbtn ${p.stock<=0?'out':''} ${isBad(p)?'bad':''}" onclick="addCart('${esc(p.code)}')">
       <div class="n">${esc(p.name)}</div>
       <div class="m"><span>${won(p.price)}</span><span>재고 ${p.stock}${isBad(p)?' ⚠':''}</span></div>
@@ -788,7 +812,7 @@ function addCart(code, d=1){
   const p = state.products.find(x=>x.code===code); if(!p) return;
   const n = (cart[code]||0) + d;
   if(n<=0) delete cart[code]; else cart[code]=n;
-  if(d>0 && n>p.stock) toast(`${p.name}: 전산재고(${p.stock})보다 많이 담았어요`, true);
+  if(d>0 && !isTicket(p) && n>p.stock) toast(`${p.name}: 전산재고(${p.stock})보다 많이 담았어요`, true);
   renderCart();
 }
 function renderCart(){
@@ -837,7 +861,7 @@ function renderStock(){
     ? `<div class="alert">⚠ 재고가 맞지 않는 상품 ${bad.length}개 — 다시 세어 확인해 주세요. (${bad.slice(0,3).map(p=>esc(p.name)).join(', ')}${bad.length>3?' 외':''})</div>` : '';
   const q = $('stockSearch').value;
   const f = {all:()=>true, bad:isBad, low:isLow, out:p=>p.stock<=0, uncounted:p=>p.actual===null||p.actual===''}[stockFilter];
-  const list = state.products.filter(p=>matches(p,q) && f(p));
+  const list = state.products.filter(p=>!isTicket(p) && matches(p,q) && f(p));
   $('stockBody').innerHTML = list.map(p=>{
     const has = !(p.actual===null||p.actual===''||p.actual===undefined);
     const diff = has ? p.actual - p.stock : '';
@@ -867,7 +891,7 @@ async function adjust(code){
 /* ============ 입고 / 상품 ============ */
 function renderInSelect(){
   const cur = $('inProduct').value;
-  $('inProduct').innerHTML = state.products.map(p=>`<option value="${esc(p.code)}">${esc(p.name)} (재고 ${p.stock})</option>`).join('');
+  $('inProduct').innerHTML = state.products.filter(p=>!isTicket(p)).map(p=>`<option value="${esc(p.code)}">${esc(p.name)} (재고 ${p.stock})</option>`).join('');
   if(cur) $('inProduct').value = cur;
   renderInList();
 }
@@ -939,8 +963,9 @@ async function loadReport(){
   const t = r.totals;
   $('archInfo').textContent = r.archived ? `✔ '${date}' 시트로 보관되어 있습니다.` : '아직 날짜 시트로 보관되지 않았습니다.';
   $('kpis').innerHTML = [
-    ['결제 건수', t.payments+'건'], ['판매 수량', t.qty+'개'], ['매출', won(t.revenue)],
-    ['결제당 평균', won(t.avg)], ['환불', won(t.refund)], ['입고 수량', t.received+'개'],
+    ['결제 건수', t.payments+'건'], ['굿즈 수량', (t.qty-(t.ticketQty||0))+'개'], ['매출', won(t.revenue)],
+    ['결제당 평균', won(t.avg)], ['체험 인원', (t.ticketQty||0)+'명'], ['체험 매출', won(t.ticketAmount||0)],
+    ['환불', won(t.refund)], ['입고 수량', t.received+'개'],
   ].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')
    + `<div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치 (현재)</div><div class="v">${t.mismatch}개</div></div>`;
   const today = date === kstDate();
@@ -954,6 +979,11 @@ async function loadReport(){
       <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
       ${!p.refunded?`<button class="btn sm danger" style="margin-top:6px" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button>`:''}
     </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
+  const th = r.ticketHours || [];
+  $('ticketCard').hidden = !th.length;
+  $('ticketHours').innerHTML = th.map(h=>`<tr><td><b>${esc(h.hour)}</b></td><td class="num">${h.qty}명</td><td class="num">${won(h.amount)}</td>
+    <td class="small muted">${esc(Object.keys(h.kinds).map(k=>k.replace(/^체험 티켓 - /,'')+' '+h.kinds[k]+'명').join(', '))}</td></tr>`).join('')
+    + (th.length ? `<tr><td><b>합계</b></td><td class="num"><b>${th.reduce((a,h)=>a+h.qty,0)}명</b></td><td class="num"><b>${won(th.reduce((a,h)=>a+h.amount,0))}</b></td><td></td></tr>` : '');
   $('prodSales').innerHTML = r.byProduct.filter(p=>p.qty||p.amount).map(p=>`<tr><td>${esc(p.name)}</td><td class="num">${p.qty}</td><td class="num">${won(p.amount)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="muted">판매 없음</td></tr>';
 }
