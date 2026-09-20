@@ -337,6 +337,10 @@ body.locked main,body.locked nav,body.locked header{visibility:hidden}
         <tbody id="ticketHours"></tbody>
       </table></div>
     </div>
+    <div class="card" id="countCard" hidden>
+      <h2>📋 실사 기록 <span class="muted small">(오픈 · 마감)</span></h2>
+      <div id="countLog"></div>
+    </div>
     <div class="card">
       <h2>상품별 판매</h2>
       <div class="tbl-wrap"><table>
@@ -1143,6 +1147,24 @@ async function loadReport(){
       <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
       ${!p.refunded?`<button class="btn sm danger" style="margin-top:6px" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button>`:''}
     </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
+  const cs = r.counts || [];
+  $('countCard').hidden = !cs.length;
+  if(cs.length){
+    const kinds = ['오픈','마감'].filter(k=>cs.some(c=>c.kind===k));
+    $('countLog').innerHTML = kinds.map(k=>{
+      const rows = cs.filter(c=>c.kind===k);
+      const bad = rows.filter(c=>c.diff!==0);
+      return `<div style="margin-bottom:14px">
+        <b>${k==='오픈'?'🌅 오픈 실사':'🏁 마감 실사'}</b>
+        <span class="small muted"> · ${esc(r.date)} ${esc(rows[0].time)} · ${esc(rows[0].staff||'')} · 상품 ${rows.length}개 · 차이 ${bad.length}개</span>
+        ${bad.length ? `<div class="tbl-wrap" style="margin-top:6px"><table>
+            <thead><tr><th>상품</th><th class="num">전산</th><th class="num">실사</th><th class="num">차이</th></tr></thead>
+            <tbody>${bad.map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${c.stock}</td><td class="num">${c.actual}</td>
+              <td class="num" style="color:var(--bad)">${c.diff>0?'+':''}${c.diff}</td></tr>`).join('')}</tbody></table></div>`
+          : '<div class="small muted" style="margin-top:4px">전산과 모두 일치했습니다.</div>'}
+      </div>`;
+    }).join('');
+  }
   const th = r.ticketHours || [];
   $('ticketCard').hidden = !th.length;
   $('ticketHours').innerHTML = th.map(h=>`<tr><td><b>${esc(h.hour)}</b></td><td class="num">${h.qty}명</td><td class="num">${won(h.amount)}</td>
