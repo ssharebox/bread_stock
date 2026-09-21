@@ -1503,7 +1503,7 @@ document.querySelectorAll('#syncSeg button').forEach(b=>b.onclick=()=>{
 function fillCfg(){ renderSyncSeg(); $('cfgUrl').value=cfg.url; $('cfgPin').value=cfg.pin ? '••••' : ''; $('cfgStaff').value=cfg.staff; }
 // 기본 상품(봉투·티켓 등) 중 시트에 없는 것만 추가
 const SEED_CHECK = [
-  ['BB028','봉투',200], ['TK001','체험 티켓 - 사전예약 (현장결제)',9000],
+  ['PK001','봉투',200], ['TK001','체험 티켓 - 사전예약 (현장결제)',9000],
   ['TK002','체험 티켓 - 현장예약',11000], ['TK003','체험 티켓 - 할인가',4000],
 ];
 function renderSeedInfo(){
