@@ -454,6 +454,18 @@ ul.plain li{margin:5px 0;line-height:1.55}
   <video id="camVideo" muted playsinline></video>
   <p class="small muted" id="camMsg" style="margin:8px 0 0">바코드를 화면 가운데에 맞춰 주세요. 인식되면 삐 소리와 함께 현재 탭에 추가됩니다.</p>
 </div></div>
+<div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle"><div class="box" style="width:min(420px,100%)">
+  <div class="row" style="margin-bottom:10px"><b class="grow" id="pinTitle" style="font-size:17px">🔑 기록 수정 비밀번호</b>
+    <button class="btn sm" onclick="pinCancel()">닫기</button></div>
+  <p class="small muted" id="pinWhat" style="margin:0 0 10px"></p>
+  <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="비밀번호 4자리">
+  <p class="small warnText" id="pinErr" style="margin:8px 0 0" hidden>비밀번호가 맞지 않습니다</p>
+  <div class="row" style="margin-top:12px">
+    <button class="btn primary grow" onclick="pinOk()">확인</button>
+    <button class="btn grow" onclick="pinCancel()">취소</button>
+  </div>
+  <p class="small muted" style="margin:10px 0 0">이미 저장된 결제를 고치거나 지울 때만 묻습니다. 판매·입고·실사는 그대로 쓰시면 됩니다.</p>
+</div></div>
 <div class="modal" id="closeModal" role="dialog" aria-modal="true" aria-labelledby="closeTitle"><div class="box">
   <div class="row" style="margin-bottom:10px"><b class="grow" id="closeTitle" style="font-size:18px">🏁 오늘 마감하기</b>
     <button class="btn sm" onclick="hideClose()">닫기</button></div>
@@ -1242,9 +1254,10 @@ async function loadReport(){
     </summary>
     <div class="items">${p.items.map(i=>`${esc(i.name)} × ${i.qty} = ${won(i.amount)}`).join('<br>')}
       <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
-      ${!p.refunded?`<div class="row" style="margin-top:6px">
+      ${!p.refunded?`<div class="row" style="margin-top:6px;flex-wrap:wrap">
         <button class="btn sm" onclick="rcEdit('${esc(p.payId)}')">✏️ 수정</button>
-        <button class="btn sm danger" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button></div>`:''}
+        <button class="btn sm danger" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button>
+        <button class="btn sm" onclick="delPay('${esc(p.payId)}')" title="손님 환불이 아니라, 잘못 입력한 결제를 없앨 때">🗑 잘못 넣은 결제 지우기</button></div>`:''}
     </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
   const cs = r.counts || [];
   $('countCard').hidden = !cs.length;
@@ -1472,7 +1485,9 @@ async function rcSave(){
   out.textContent = '기록하는 중…';
   try{
     if(rcEditPayId){
-      const r = await api('editPay', {payId:rcEditPayId, items, staff:cfg.staff||'',
+      const delPin = await askPin('이미 저장된 결제를 고칩니다. 바뀐 만큼 그날 매출과 재고가 함께 조정됩니다.');
+      if(!delPin){ out.textContent = ''; return; }
+      const r = await api('editPay', {payId:rcEditPayId, items, delPin, staff:cfg.staff||'',
         affectStock:$('rcStock').checked}, {quiet:true, noApply:true, timeout:60000});
       if(r.products){ state.products=r.products; state.serverProducts=JSON.parse(JSON.stringify(r.products));
         state.todayTx=r.tx||state.todayTx; state.serverTx=r.tx||state.serverTx; outbox.forEach(applyOp); saveCache(); renderAll(); }
@@ -1492,6 +1507,42 @@ async function rcSave(){
     out.className = 'small warnText';
     out.textContent = '기록하지 못했습니다: ' + e.message;
   }
+}
+
+/* 기록 수정 비밀번호 받기 — 맞는지는 구글 시트 쪽에서 확인합니다 */
+let pinResolve = null;
+function askPin(what){
+  $('pinWhat').textContent = what;
+  $('pinInput').value = ''; $('pinErr').hidden = true;
+  $('pinModal').classList.add('on');
+  setTimeout(()=>$('pinInput').focus(), 60);
+  return new Promise(res=>{ pinResolve = res; });
+}
+function pinOk(){
+  const v = $('pinInput').value.trim();
+  if(!v){ $('pinErr').textContent = '비밀번호를 입력해 주세요'; $('pinErr').hidden = false; return; }
+  $('pinModal').classList.remove('on');
+  const r = pinResolve; pinResolve = null; if(r) r(v);
+}
+function pinCancel(){
+  $('pinModal').classList.remove('on');
+  const r = pinResolve; pinResolve = null; if(r) r(null);
+}
+$('pinInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); pinOk(); } });
+
+// 잘못 입력한 결제 없애기 (환불과 다름 — 그날 매출에서 빠지고 재고가 돌아옵니다)
+async function delPay(payId){
+  const pay = (reconData&&reconData.payments||[]).find(p=>p.payId===payId);
+  const info = pay ? `${pay.time.slice(11,16)} · ${won(pay.amount)} · ${pay.items.map(i=>i.name+'×'+i.qty).join(', ')}` : payId;
+  const delPin = await askPin(`지울 결제: ${info}\n그날 매출에서 빠지고 재고는 되돌아옵니다. 손님 환불이 아니라 잘못 입력했을 때만 쓰세요.`);
+  if(!delPin) return;
+  try{
+    const r = await api('deletePay', {payId, delPin, staff:cfg.staff||''}, {quiet:true, noApply:true, timeout:60000});
+    if(r.products){ state.products=r.products; state.serverProducts=JSON.parse(JSON.stringify(r.products));
+      state.todayTx=r.tx||state.todayTx; state.serverTx=r.tx||state.serverTx; outbox.forEach(applyOp); saveCache(); renderAll(); }
+    toast(`${esc(r.date)} 매출에서 ${won(r.removed)} 뺐습니다`);
+    loadReport();
+  }catch(e){ toast('지우지 못했습니다: ' + e.message, true); }
 }
 
 async function refund(payId){
@@ -1616,7 +1667,7 @@ async function openCam(deviceId){
 }
 function stopCam(){ try{ camControls && camControls.stop(); }catch(_){} camControls = null; }
 function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
-document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
+document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('pinModal').classList.contains('on')) pinCancel(); if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
 
 
 /* ============ 30초마다 구글 시트 깨우기 ============ */
