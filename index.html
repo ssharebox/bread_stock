@@ -362,9 +362,20 @@ ul.plain li{margin:5px 0;line-height:1.55}
     <div class="card" id="receiptCard">
       <h2>🧾 영수증 직접 입력 <span class="muted small">(빠진 결제 · 잘못된 금액 고치기)</span></h2>
       <p class="small muted" id="rcHelp" style="margin:0 0 10px">봉투처럼 뒤늦게 등록한 상품, 티켓 등록 전 영수증, 가격이 다르게 들어간 결제를 날짜·시각을 지정해 넣습니다.</p>
+      <div class="seg" id="rcKind" style="margin:0 0 12px">
+        <button type="button" data-k="sale">🧾 판매 기록</button>
+        <button type="button" data-k="refund">↩️ 환불 기록</button>
+      </div>
       <div class="pair">
         <div><label class="small muted" style="display:block;margin-bottom:4px">날짜</label><input id="rcDate" type="date" style="width:100%"></div>
         <div><label class="small muted" style="display:block;margin-bottom:4px">시각</label><input id="rcTime" type="time" style="width:100%"></div>
+      </div>
+      <div id="rcReason" hidden style="margin-top:10px">
+        <label class="small muted" style="display:block;margin-bottom:4px">환불 사유</label>
+        <div class="seg" id="rcReasonSeg">
+          <button type="button" data-r="변심">↩️ 단순 변심 · 재고로 돌아옴</button>
+          <button type="button" data-r="불량">⚠️ 불량 · 다시 못 팜</button>
+        </div>
       </div>
       <div id="rcLines" style="margin-top:10px"></div>
       <div class="row" style="margin-top:8px">
@@ -374,7 +385,7 @@ ul.plain li{margin:5px 0;line-height:1.55}
       </div>
       <label class="row" style="margin-top:10px;align-items:flex-start;gap:8px;flex-wrap:nowrap">
         <input type="checkbox" id="rcStock" checked style="width:auto;flex:0 0 auto;margin-top:2px">
-        <span class="small">재고도 함께 차감 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span></span>
+        <span class="small" id="rcStockLbl">재고도 함께 차감 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span></span>
       </label>
       <div class="row" style="margin-top:10px">
         <button class="btn primary grow" onclick="rcSave()">이 날짜에 기록하기</button>
@@ -683,7 +694,7 @@ function summarize(tx, products, date){
   return { date, payments, byProduct:Object.values(bp).sort((a,b)=>b.qty-a.qty), mismatch, tx, ticketHours,
     totals:{ payments:valid, qty:Object.values(bp).reduce((s,x)=>s+x.qty,0), revenue, avg: valid?Math.round(revenue/valid):0,
       refund:-ref, received: tx.filter(t=>t.type==='입고').reduce((s,x)=>s+x.qty,0), mismatch: mismatch.length,
-      ticketQty: tk.qty, ticketAmount: tk.amount } };
+      ticketQty: tk.qty, ticketAmount: tk.amount, defectQty: 0, defectAmount: 0 }, defects: [] };
 }
 
 /* ============ 상태 ============ */
@@ -1237,14 +1248,15 @@ async function loadReport(){
   const t = r.totals;
   reconData = r; $('reconOut').innerHTML = ''; $('reconActual').value = ''; renderReconInfo();
   if(!rcEditPayId && $('rcDate')){ if(!$('rcDate').value || $('rcDate').value !== date) $('rcDate').value = date;
-    if(!$('rcTime').value) $('rcTime').value = kstTime().slice(11,16); renderRc(); }
+    if(!$('rcTime').value) $('rcTime').value = kstTime().slice(11,16); renderRcMode(); renderRc(); }
   $('archInfo').textContent = r.archived ? `✔ '${date}' 시트로 보관되어 있습니다.` : '아직 날짜 시트로 보관되지 않았습니다.';
   $('kpis').innerHTML = [
     ['결제 건수', t.payments+'건'], ['굿즈 수량', (t.qty-(t.ticketQty||0))+'개'], ['매출', won(t.revenue)],
     ['결제당 평균', won(t.avg)], ['체험 인원', (t.ticketQty||0)+'명'], ['체험 매출', won(t.ticketAmount||0)],
     ['환불', won(t.refund)], ['입고 수량', t.received+'개'],
   ].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')
-   + `<div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치 (현재)</div><div class="v">${t.mismatch}개</div></div>`;
+   + `<div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치 (현재)</div><div class="v">${t.mismatch}개</div></div>`
+   + (t.defectQty ? `<div class="kpi bad"><div class="l">불량 환불</div><div class="v">${t.defectQty}개 · ${won(t.defectAmount)}</div></div>` : '');
   const today = date === kstDate();
   $('payList').innerHTML = r.payments.map(p=>`
     <details class="pay"><summary>
@@ -1256,7 +1268,8 @@ async function loadReport(){
       <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
       ${!p.refunded?`<div class="row" style="margin-top:6px;flex-wrap:wrap">
         <button class="btn sm" onclick="rcEdit('${esc(p.payId)}')">✏️ 수정</button>
-        <button class="btn sm danger" onclick="refund('${esc(p.payId)}')">이 결제 환불 (재고 복원)</button>
+        <button class="btn sm danger" onclick="refund('${esc(p.payId)}')">↩️ 환불 (재고 복원)</button>
+        <button class="btn sm danger" onclick="refund('${esc(p.payId)}','불량')">⚠️ 불량 환불 (재고 그대로)</button>
         <button class="btn sm" onclick="delPay('${esc(p.payId)}')" title="손님 환불이 아니라, 잘못 입력한 결제를 없앨 때">🗑 잘못 넣은 결제 지우기</button></div>`:''}
     </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
   const cs = r.counts || [];
@@ -1402,20 +1415,53 @@ async function runRecon(){
 /* ============ 영수증 직접 입력 / 결제 수정 ============ */
 let rcLines = [];          // [{code, qty, price}]
 let rcEditPayId = null;    // 수정 중인 결제번호 (null 이면 새 영수증)
+let rcMode = 'sale';       // 'sale' = 판매 기록, 'refund' = 환불 기록
+let rcReason = '변심';     // 환불 사유: '변심' = 재고 복원, '불량' = 재고 그대로
+function setRcReason(r){ rcReason = r; renderRcMode(); }
+function setRcMode(k){
+  if(rcEditPayId) return;
+  rcMode = k; rcLines = []; renderRc(); renderRcMode();
+}
+function renderRcMode(){
+  const ref = rcMode === 'refund';
+  document.querySelectorAll('#rcKind button').forEach(b=>b.classList.toggle('on', b.dataset.k===rcMode));
+  $('rcKind').hidden = !!rcEditPayId;
+  if(rcEditPayId) return;
+  $('receiptCard').querySelector('h2').innerHTML = ref
+    ? `↩️ 환불 직접 입력 <span class="muted small">(금액만 알아도 됩니다)</span>`
+    : `🧾 영수증 직접 입력 <span class="muted small">(빠진 결제 · 잘못된 금액 고치기)</span>`;
+  $('rcHelp').textContent = ref
+    ? '반품 영수증에 금액만 찍혀 있어도 기록됩니다. 무엇을 몇 개 돌려줬는지 알면 상품과 수량까지 넣으세요 — 그때만 재고가 돌아옵니다.'
+    : '봉투처럼 뒤늦게 등록한 상품, 티켓 등록 전 영수증, 가격이 다르게 들어간 결제를 날짜·시각을 지정해 넣습니다.';
+  $('receiptCard').querySelector('.btn.primary').textContent = ref ? '이 날짜에 환불로 기록하기' : '이 날짜에 기록하기';
+  $('rcReason').hidden = !ref;
+  document.querySelectorAll('#rcReasonSeg button').forEach(b=>b.classList.toggle('on', b.dataset.r===rcReason));
+  const bad = ref && rcReason === '불량';
+  $('rcStock').disabled = bad;
+  if(bad) $('rcStock').checked = false;
+  $('rcStockLbl').innerHTML = bad
+    ? '<b>불량은 재고로 돌아오지 않습니다</b> <span class="muted">— 팔 수 없는 물건이라 그대로 둡니다. <code>불량</code> 시트에 따로 쌓입니다.</span>'
+    : ref
+    ? '재고도 되돌리기 <span class="muted">(수량을 넣었을 때만 적용됩니다)</span>'
+    : '재고도 함께 차감 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span>';
+}
+document.querySelectorAll('#rcReasonSeg button').forEach(b=>b.onclick=()=>setRcReason(b.dataset.r));
+document.querySelectorAll('#rcKind button').forEach(b=>b.onclick=()=>setRcMode(b.dataset.k));
 
 function rcProductOptions(sel){
   return state.products.map(p=>`<option value="${esc(p.code)}"${p.code===sel?' selected':''}>${esc(p.name)}</option>`).join('');
 }
 function renderRc(){
   if(!$('rcLines')) return;
-  if(!rcLines.length) rcLines = [{code:'', qty:1, amount:'', memo:''}];
+  if(!rcLines.length) rcLines = [{code:'', qty:(rcMode==='refund'?'':1), amount:'', memo:''}];
   $('rcLines').innerHTML = `<div class="rcline rchead small muted">
       <span>상품명</span><span>수량</span><span>금액</span><span></span><span>비고</span></div>`
     + rcLines.map((l,i)=>`
     <div class="rcline">
-      <select onchange="rcSet(${i},'code',this.value)"><option value="">상품 고르기…</option>${rcProductOptions(l.code)}</select>
-      <input type="number" inputmode="numeric" value="${l.qty}" min="1" title="수량"
-        onchange="rcSet(${i},'qty',this.value)">
+      <select onchange="rcSet(${i},'code',this.value)"><option value="">${rcMode==='refund'?'상품 모름':'상품 고르기…'}</option>${rcProductOptions(l.code)}</select>
+      <input type="number" inputmode="numeric" value="${l.qty}" min="${rcMode==='refund'?0:1}"
+        title="${rcMode==='refund'?'수량 (모르면 비워 두세요)':'수량'}"
+        placeholder="${rcMode==='refund'?'모름':''}" onchange="rcSet(${i},'qty',this.value)">
       <input type="number" inputmode="numeric" value="${l.amount}" title="영수증에 찍힌 금액"
         placeholder="${rcAutoAmount(l)}" onchange="rcSet(${i},'amount',this.value)">
       <button class="btn sm danger" onclick="rcDel(${i})" title="이 줄 빼기">✕</button>
@@ -1439,7 +1485,7 @@ function rcSet(i,k,v){
   rcLines[i][k] = (k==='code'||k==='memo') ? v : (v===''?'':Number(v));
   renderRc();
 }
-function rcAddLine(){ rcLines.push({code:'', qty:1, amount:'', memo:''}); renderRc(); }
+function rcAddLine(){ rcLines.push({code:'', qty:(rcMode==='refund'?'':1), amount:'', memo:''}); renderRc(); }
 function rcDel(i){ rcLines.splice(i,1); renderRc(); }
 
 // 기존 결제를 수정 모드로 불러오기
@@ -1447,7 +1493,7 @@ function rcEdit(payId){
   const r = reconData; if(!r) return;
   const pay = (r.payments||[]).find(p=>p.payId===payId);
   if(!pay){ toast('결제를 찾을 수 없습니다', true); return; }
-  rcEditPayId = payId;
+  rcEditPayId = payId; rcMode = 'sale'; $('rcKind').hidden = true;
   rcLines = pay.items.filter(i=>i.qty).map(i=>({code:i.code, qty:i.qty, amount:i.amount, memo:''}));
   $('rcDate').value = r.date;
   $('rcTime').value = pay.time.slice(11,16);
@@ -1462,26 +1508,52 @@ function rcEdit(payId){
   $('receiptCard').scrollIntoView({behavior:'smooth', block:'center'});
 }
 function rcReset(){
-  rcEditPayId = null; rcLines = [];
+  rcEditPayId = null; rcLines = []; rcMode = 'sale'; rcReason = '변심';
   $('rcDate').disabled = false; $('rcTime').disabled = false;
   $('rcDate').value = $('repDate').value || kstDate();
   $('rcTime').value = kstTime().slice(11,16);
   $('rcOut').innerHTML = '';
-  $('receiptCard').querySelector('h2').innerHTML =
-    `🧾 영수증 직접 입력 <span class="muted small">(빠진 결제 · 잘못된 금액 고치기)</span>`;
-  $('rcHelp').textContent = '봉투처럼 뒤늦게 등록한 상품, 티켓 등록 전 영수증, 가격이 다르게 들어간 결제를 날짜·시각을 지정해 넣습니다.';
-  $('receiptCard').querySelector('.btn.primary').textContent = '이 날짜에 기록하기';
+  renderRcMode();
   renderRc();
 }
 
 async function rcSave(){
   const out = $('rcOut'); out.className = 'small';
+  if(isDemo()){ out.className='small warnText'; out.textContent='샘플 모드에서는 기록하지 않습니다. 먼저 연결해 주세요.'; return; }
+
+  // ── 환불 기록: 금액만 있어도 됨 ──
+  if(rcMode === 'refund' && !rcEditPayId){
+    const refs = rcLines.filter(l=>rcLineAmount(l)>0);
+    if(!refs.length){ out.className='small warnText'; out.textContent='환불 금액을 넣어 주세요.'; return; }
+    out.textContent = '기록하는 중…';
+    try{
+      let total = 0, lines = [];
+      for(const l of refs){
+        const r = await api('manualRefund', {date:$('rcDate').value, time:$('rcTime').value,
+          amount: rcLineAmount(l), code: l.code||'', qty: Number(l.qty)||0, reason: rcReason,
+          memo: l.memo||'', staff: cfg.staff||'', affectStock: $('rcStock').checked},
+          {quiet:true, noApply:true, timeout:60000});
+        if(r.products){ state.products=r.products; state.serverProducts=JSON.parse(JSON.stringify(r.products));
+          state.todayTx=r.tx||state.todayTx; state.serverTx=r.tx||state.serverTx; }
+        total += Math.abs(r.amount);
+        lines.push(`${esc(r.name)}${r.qty?' ×'+r.qty:' (수량 모름)'} ${won(-Math.abs(r.amount))}`
+          + (r.defect ? ' · <b>불량</b> (재고 그대로)' : (r.stockBack ? ' · 재고 복원' : '')));
+      }
+      outbox.forEach(applyOp); saveCache(); renderAll();
+      out.innerHTML = `✓ <b>${esc($('rcDate').value)}</b> 환불로 기록했습니다 · 합계 ${won(-total)}<br>
+        <span class="muted">${lines.join('<br>')}</span>`;
+      rcLines = [];
+      $('repDate').value = $('rcDate').value;
+      await loadReport();
+    }catch(e){ out.className='small warnText'; out.textContent = '기록하지 못했습니다: ' + e.message; }
+    return;
+  }
+
   const items = rcLines.filter(l=>l.code && Number(l.qty)>0)
     .map(l=>({code:l.code, qty:Number(l.qty),
       amount: (l.amount===''||l.amount===null||l.amount===undefined) ? '' : Number(l.amount),
       memo: l.memo||''}));
   if(!items.length){ out.className='small warnText'; out.textContent='상품과 수량을 넣어 주세요.'; return; }
-  if(isDemo()){ out.className='small warnText'; out.textContent='샘플 모드에서는 기록하지 않습니다. 먼저 연결해 주세요.'; return; }
   out.textContent = '기록하는 중…';
   try{
     if(rcEditPayId){
@@ -1545,9 +1617,15 @@ async function delPay(payId){
   }catch(e){ toast('지우지 못했습니다: ' + e.message, true); }
 }
 
-async function refund(payId){
-  if(!confirm(`${payId} 결제를 환불할까요?\n판매된 수량이 재고로 되돌아갑니다.`)) return;
-  await api('refund', {payId}); toast('환불 처리했습니다'); loadReport(); refresh();
+async function refund(payId, reason){
+  const bad = reason === '불량';
+  const msg = bad
+    ? `${payId} 결제를 불량으로 환불할까요?\n\n· 돈은 돌려준 것으로 기록됩니다\n· 상품은 다시 팔 수 없으므로 재고로 돌아오지 않습니다\n· 불량 시트에 따로 쌓입니다`
+    : `${payId} 결제를 환불할까요?\n판매된 수량이 재고로 되돌아갑니다.`;
+  if(!confirm(msg)) return;
+  await api('refund', {payId, reason: bad ? '불량' : '변심', staff: cfg.staff||''});
+  toast(bad ? '불량 환불로 처리했습니다 (재고 그대로)' : '환불 처리했습니다');
+  loadReport(); refresh();
 }
 async function exportNow(){
   const date = $('repDate').value;
