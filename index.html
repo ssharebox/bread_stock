@@ -78,6 +78,7 @@ input[type=text],input[type=number],input[type=search],input[type=date],input[ty
 .seg{display:flex;gap:6px;flex-wrap:wrap}
 .seg button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 6px;cursor:pointer}
 .seg button.on{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:700}
+#rcReasonSeg button{min-width:145px;font-size:13px}
 
 /* 재고 */
 .alert{border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--bad);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-weight:500}
@@ -375,6 +376,7 @@ ul.plain li{margin:5px 0;line-height:1.55}
         <div class="seg" id="rcReasonSeg">
           <button type="button" data-r="변심">↩️ 단순 변심 · 재고로 돌아옴</button>
           <button type="button" data-r="불량">⚠️ 불량 · 다시 못 팜</button>
+          <button type="button" data-r="교환">🔁 교환 · 매출 그대로</button>
         </div>
       </div>
       <div id="rcLines" style="margin-top:10px"></div>
@@ -395,6 +397,16 @@ ul.plain li{margin:5px 0;line-height:1.55}
     <div class="card">
       <h2>결제별 판매 <span class="muted small">(누르면 상세)</span></h2>
       <div id="payList"></div>
+    </div>
+    <div class="card" id="refCard" hidden>
+      <h2>↩️ 환불 · 교환 내역 <span class="muted small">(구분을 잘못 넣었으면 여기서 바로잡습니다)</span></h2>
+      <p class="small muted" style="margin:0 0 10px">교환인데 그냥 <b>환불</b>로 넣어 둔 게 있으면 <b>🔁 교환</b>을 누르세요. 그 줄이 <b>0원</b>이 되어 매출이 되살아나고, <code>불량</code> 시트에 <b>구분 = 교환</b>으로 올라가 팝업이 끝나면 업체에 청구할 수 있습니다.</p>
+      <div id="refList"></div>
+      <label class="row" style="margin-top:10px;align-items:center;gap:8px">
+        <input type="checkbox" id="rxStock" checked style="width:auto">
+        <span class="small">재고도 차이만큼 맞추기 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span></span>
+      </label>
+      <div id="rxOut" class="small" style="margin-top:8px"></div>
     </div>
     <div class="card" id="ticketCard" hidden>
       <h2>🎟 체험 티켓 — 시간대별 인원</h2>
@@ -694,7 +706,8 @@ function summarize(tx, products, date){
   return { date, payments, byProduct:Object.values(bp).sort((a,b)=>b.qty-a.qty), mismatch, tx, ticketHours,
     totals:{ payments:valid, qty:Object.values(bp).reduce((s,x)=>s+x.qty,0), revenue, avg: valid?Math.round(revenue/valid):0,
       refund:-ref, received: tx.filter(t=>t.type==='입고').reduce((s,x)=>s+x.qty,0), mismatch: mismatch.length,
-      ticketQty: tk.qty, ticketAmount: tk.amount, defectQty: 0, defectAmount: 0 }, defects: [] };
+      ticketQty: tk.qty, ticketAmount: tk.amount, defectQty: 0, defectAmount: 0,
+      exchangeQty: 0, exchangeAmount: 0 }, defects: [], exchanges: [] };
 }
 
 /* ============ 상태 ============ */
@@ -1256,7 +1269,8 @@ async function loadReport(){
     ['환불', won(t.refund)], ['입고 수량', t.received+'개'],
   ].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')
    + `<div class="kpi ${t.mismatch?'bad':''}"><div class="l">재고 불일치 (현재)</div><div class="v">${t.mismatch}개</div></div>`
-   + (t.defectQty ? `<div class="kpi bad"><div class="l">불량 환불</div><div class="v">${t.defectQty}개 · ${won(t.defectAmount)}</div></div>` : '');
+   + (t.defectQty ? `<div class="kpi bad"><div class="l">불량 환불</div><div class="v">${t.defectQty}개 · ${won(t.defectAmount)}</div></div>` : '')
+   + (t.exchangeQty ? `<div class="kpi"><div class="l">교환 <span class="muted">(업체 청구)</span></div><div class="v">${t.exchangeQty}개 · ${won(t.exchangeAmount)}</div></div>` : '');
   const today = date === kstDate();
   $('payList').innerHTML = r.payments.map(p=>`
     <details class="pay"><summary>
@@ -1270,8 +1284,10 @@ async function loadReport(){
         <button class="btn sm" onclick="rcEdit('${esc(p.payId)}')">✏️ 수정</button>
         <button class="btn sm danger" onclick="refund('${esc(p.payId)}')">↩️ 환불 (재고 복원)</button>
         <button class="btn sm danger" onclick="refund('${esc(p.payId)}','불량')">⚠️ 불량 환불 (재고 그대로)</button>
+        <button class="btn sm" onclick="refund('${esc(p.payId)}','교환')">🔁 교환 (매출 그대로)</button>
         <button class="btn sm" onclick="delPay('${esc(p.payId)}')" title="손님 환불이 아니라, 잘못 입력한 결제를 없앨 때">🗑 잘못 넣은 결제 지우기</button></div>`:''}
     </div></details>`).join('') || '<p class="muted">이 날짜의 결제가 없습니다.</p>';
+  renderRefList();
   const cs = r.counts || [];
   $('countCard').hidden = !cs.length;
   if(cs.length){
@@ -1298,6 +1314,69 @@ async function loadReport(){
   $('prodSales').innerHTML = r.byProduct.filter(p=>p.qty||p.amount).map(p=>`<tr><td>${esc(p.name)}</td><td class="num">${p.qty}</td><td class="num">${won(p.amount)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="muted">판매 없음</td></tr>';
 }
+/* ============ 환불 · 교환 구분 바로잡기 ============ */
+// 이미 저장된 환불 줄이 어떤 구분이었는지 (서버의 txKind_ 와 같은 규칙)
+function txKind(t){
+  if(t.type === '교환') return '교환';
+  const m = t.memo || '';
+  if(m.indexOf('교환 (매출 0원') >= 0) return '교환';
+  if(m.indexOf('불량') >= 0) return '불량';
+  return '변심';
+}
+const KIND_TAG = {'변심':'↩️ 변심 (재고 복원)', '불량':'⚠️ 불량 (재고 그대로)', '교환':'🔁 교환 (매출 0원)'};
+
+function renderRefList(){
+  const r = reconData;
+  const rows = ((r&&r.tx)||[]).filter(t=>t.type==='환불'||t.type==='교환');
+  $('refCard').hidden = !rows.length;
+  if(!rows.length) return;
+  $('refList').innerHTML = rows.map((t,i)=>{
+    const k = txKind(t);
+    const base = t.amount ? Math.abs(t.amount) : Math.abs(t.price*(Math.abs(t.qty)||1));
+    return `<div class="pay" style="padding:10px 0;border-bottom:1px solid var(--line)">
+      <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+        <b>${esc(t.time.slice(11,16))}</b>
+        <span class="grow">${esc(t.name||'(상품 미상)')}${Math.abs(t.qty)?' ×'+Math.abs(t.qty):' <span class="muted small">(수량 모름)</span>'}</span>
+        <b class="${t.type==='교환'?'':'refunded'}">${t.type==='교환'?`0원 <span class="muted small">(청구 ${won(base)})</span>`:won(t.amount)}</b>
+        <span class="tag ${k==='변심'?'':'red'}">${esc(KIND_TAG[k])}</span>
+      </div>
+      <div class="row" style="margin-top:6px;flex-wrap:wrap">
+        ${['변심','불량','교환'].filter(x=>x!==k).map(x=>
+          `<button class="btn sm${x==='교환'?' primary':''}" onclick="reclass(${i},'${x}')">${esc(KIND_TAG[x].split(' ')[0])} ${x}(으)로 바꾸기</button>`).join('')}
+      </div>
+      ${t.memo?`<div class="small muted" style="margin-top:4px">${esc(t.memo)}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function reclass(i, to){
+  const r = reconData; if(!r) return;
+  const rows = (r.tx||[]).filter(t=>t.type==='환불'||t.type==='교환');
+  const t = rows[i]; if(!t) return;
+  const out = $('rxOut'); out.className = 'small';
+  const from = txKind(t);
+  const msg = to==='교환'
+    ? `이 줄을 교환으로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n· 금액이 0원이 되어 그날 매출이 ${won(Math.abs(t.amount))} 되살아납니다\n· 불량 시트에 구분 '교환'으로 올라갑니다 (업체 청구용)\n· 재고는 '${from}' → '교환' 차이만큼만 맞춥니다`
+    : `이 줄을 ${to}(으)로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n재고는 '${from}' → '${to}' 차이만큼만 맞춥니다.`;
+  if(!confirm(msg)) return;
+  const pin = await askPin(`환불 구분을 '${to}'(으)로 바꿉니다`);
+  if(pin === null) return;
+  out.textContent = '바꾸는 중…';
+  try{
+    const res = await api('reclassify', {date:r.date, rows:[{time:t.time, code:t.code}], to,
+      delPin:pin, staff:cfg.staff||'', affectStock:$('rxStock').checked},
+      {quiet:true, noApply:true, timeout:60000});
+    if(res.products){ state.products=res.products; state.serverProducts=JSON.parse(JSON.stringify(res.products));
+      state.todayTx=res.tx||state.todayTx; state.serverTx=res.tx||state.serverTx;
+      outbox.forEach(applyOp); saveCache(); renderAll(); }
+    const c = res.changed[0]||{};
+    out.innerHTML = `✓ <b>${esc(c.from||from)} → ${esc(to)}</b>로 바꿨습니다`
+      + (res.revenueBack ? ` · 매출 <b>${won(res.revenueBack)}</b> 반영` : '')
+      + (c.stockMove ? ` · ${esc(c.name)} 재고 ${c.stockMove>0?'+':''}${c.stockMove}` : ' · 재고 그대로');
+    await loadReport();
+  }catch(e){ out.className='small warnText'; out.textContent = '바꾸지 못했습니다: ' + e.message; }
+}
+
 /* ============ 매출 대사 (카드 단말기 금액과 맞춰보기) ============ */
 let reconData = null;   // 마지막 리포트 결과 보관
 
@@ -1427,20 +1506,29 @@ function renderRcMode(){
   document.querySelectorAll('#rcKind button').forEach(b=>b.classList.toggle('on', b.dataset.k===rcMode));
   $('rcKind').hidden = !!rcEditPayId;
   if(rcEditPayId) return;
-  $('receiptCard').querySelector('h2').innerHTML = ref
+  const exch = ref && rcReason === '교환';
+  $('receiptCard').querySelector('h2').innerHTML = exch
+    ? `🔁 교환 직접 입력 <span class="muted small">(매출은 그대로 · 업체 청구용)</span>`
+    : ref
     ? `↩️ 환불 직접 입력 <span class="muted small">(금액만 알아도 됩니다)</span>`
     : `🧾 영수증 직접 입력 <span class="muted small">(빠진 결제 · 잘못된 금액 고치기)</span>`;
-  $('rcHelp').textContent = ref
+  $('rcHelp').textContent = exch
+    ? '같은 값의 새 물건으로 바꿔 준 경우입니다. 돈이 오가지 않았으므로 매출은 그대로 두고, 받은 불량품만 따로 쌓아 팝업이 끝나면 업체에 청구합니다.'
+    : ref
     ? '반품 영수증에 금액만 찍혀 있어도 기록됩니다. 무엇을 몇 개 돌려줬는지 알면 상품과 수량까지 넣으세요 — 그때만 재고가 돌아옵니다.'
     : '봉투처럼 뒤늦게 등록한 상품, 티켓 등록 전 영수증, 가격이 다르게 들어간 결제를 날짜·시각을 지정해 넣습니다.';
-  $('receiptCard').querySelector('.btn.primary').textContent = ref ? '이 날짜에 환불로 기록하기' : '이 날짜에 기록하기';
+  $('receiptCard').querySelector('.btn.primary').textContent =
+    exch ? '이 날짜에 교환으로 기록하기' : ref ? '이 날짜에 환불로 기록하기' : '이 날짜에 기록하기';
   $('rcReason').hidden = !ref;
   document.querySelectorAll('#rcReasonSeg button').forEach(b=>b.classList.toggle('on', b.dataset.r===rcReason));
   const bad = ref && rcReason === '불량';
   $('rcStock').disabled = bad;
   if(bad) $('rcStock').checked = false;
+  if(exch && !$('rcStock').checked) $('rcStock').checked = true;
   $('rcStockLbl').innerHTML = bad
     ? '<b>불량은 재고로 돌아오지 않습니다</b> <span class="muted">— 팔 수 없는 물건이라 그대로 둡니다. <code>불량</code> 시트에 따로 쌓입니다.</span>'
+    : exch
+    ? '새로 내준 상품만큼 재고 빼기 <span class="muted">(받은 불량품은 재고로 돌아오지 않습니다. 실사로 이미 맞춘 날짜면 체크를 끄세요)</span>'
     : ref
     ? '재고도 되돌리기 <span class="muted">(수량을 넣었을 때만 적용됩니다)</span>'
     : '재고도 함께 차감 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span>';
@@ -1535,12 +1623,18 @@ async function rcSave(){
           {quiet:true, noApply:true, timeout:60000});
         if(r.products){ state.products=r.products; state.serverProducts=JSON.parse(JSON.stringify(r.products));
           state.todayTx=r.tx||state.todayTx; state.serverTx=r.tx||state.serverTx; }
-        total += Math.abs(r.amount);
-        lines.push(`${esc(r.name)}${r.qty?' ×'+r.qty:' (수량 모름)'} ${won(-Math.abs(r.amount))}`
-          + (r.defect ? ' · <b>불량</b> (재고 그대로)' : (r.stockBack ? ' · 재고 복원' : '')));
+        total += r.exchange ? (r.claim||0) : Math.abs(r.amount);
+        lines.push(`${esc(r.name)}${r.qty?' ×'+r.qty:' (수량 모름)'} `
+          + (r.exchange ? `${won(r.claim||0)} <b>업체 청구</b> (매출 0원)` : won(-Math.abs(r.amount)))
+          + (r.defect ? ' · <b>불량</b> (재고 그대로)'
+            : r.exchange ? (r.stockMove ? ` · 재고 ${r.stockMove}` : ' · 재고 그대로')
+            : (r.stockMove > 0 ? ' · 재고 복원' : '')));
       }
       outbox.forEach(applyOp); saveCache(); renderAll();
-      out.innerHTML = `✓ <b>${esc($('rcDate').value)}</b> 환불로 기록했습니다 · 합계 ${won(-total)}<br>
+      out.innerHTML = rcReason === '교환'
+        ? `✓ <b>${esc($('rcDate').value)}</b> 교환으로 기록했습니다 · 매출 영향 없음 · 업체 청구 합계 ${won(total)}<br>
+        <span class="muted">${lines.join('<br>')}</span>`
+        : `✓ <b>${esc($('rcDate').value)}</b> 환불로 기록했습니다 · 합계 ${won(-total)}<br>
         <span class="muted">${lines.join('<br>')}</span>`;
       rcLines = [];
       $('repDate').value = $('rcDate').value;
@@ -1618,13 +1712,15 @@ async function delPay(payId){
 }
 
 async function refund(payId, reason){
-  const bad = reason === '불량';
-  const msg = bad
+  const bad = reason === '불량', exch = reason === '교환';
+  const msg = exch
+    ? `${payId} 결제를 교환으로 처리할까요?\n\n· 돈이 오가지 않았으므로 매출은 그대로입니다 (−0원)\n· 새로 내준 만큼 재고가 빠집니다\n· 받은 불량품은 불량 시트에 '교환'으로 쌓여, 팝업이 끝나면 업체에 청구합니다`
+    : bad
     ? `${payId} 결제를 불량으로 환불할까요?\n\n· 돈은 돌려준 것으로 기록됩니다\n· 상품은 다시 팔 수 없으므로 재고로 돌아오지 않습니다\n· 불량 시트에 따로 쌓입니다`
     : `${payId} 결제를 환불할까요?\n판매된 수량이 재고로 되돌아갑니다.`;
   if(!confirm(msg)) return;
-  await api('refund', {payId, reason: bad ? '불량' : '변심', staff: cfg.staff||''});
-  toast(bad ? '불량 환불로 처리했습니다 (재고 그대로)' : '환불 처리했습니다');
+  await api('refund', {payId, reason: exch ? '교환' : bad ? '불량' : '변심', staff: cfg.staff||''});
+  toast(exch ? '교환으로 처리했습니다 (매출 그대로)' : bad ? '불량 환불로 처리했습니다 (재고 그대로)' : '환불 처리했습니다');
   loadReport(); refresh();
 }
 async function exportNow(){
