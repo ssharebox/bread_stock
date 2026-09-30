@@ -513,6 +513,17 @@ ul.plain li{margin:5px 0;line-height:1.55}
   </div>
   <p class="small muted" style="margin:10px 0 0">이미 저장된 결제를 고치거나 지울 때만 묻습니다. 판매·입고·실사는 그대로 쓰시면 됩니다.</p>
 </div></div>
+<div class="modal" id="pickModal" role="dialog" aria-modal="true" aria-labelledby="pickTitle"><div class="box" style="width:min(460px,100%)">
+  <div class="row" style="margin-bottom:10px"><b class="grow" id="pickTitle" style="font-size:17px"></b>
+    <button class="btn sm" onclick="pickDone(null)">닫기</button></div>
+  <p class="small muted" id="pickWhat" style="margin:0 0 10px"></p>
+  <div id="pickList"></div>
+  <p class="small warnText" id="pickErr" style="margin:8px 0 0" hidden></p>
+  <div class="row" style="margin-top:12px">
+    <button class="btn primary grow" id="pickOkBtn" onclick="pickOk()">확인</button>
+    <button class="btn grow" onclick="pickDone(null)">취소</button>
+  </div>
+</div></div>
 <div class="modal" id="closeModal" role="dialog" aria-modal="true" aria-labelledby="closeTitle"><div class="box">
   <div class="row" style="margin-bottom:10px"><b class="grow" id="closeTitle" style="font-size:18px">🏁 오늘 마감하기</b>
     <button class="btn sm" onclick="hideClose()">닫기</button></div>
@@ -666,8 +677,9 @@ const Demo = {
         case 'adjust': { const p=m[b.code]; const to=p.actual; if(to===null) throw new Error('실사 수량이 없습니다');
           this.tx({type:'조정',code:p.code,name:p.name,qty:to-p.stock,price:p.price,amount:0,staff:b.staff,memo:`전산 ${p.stock} → ${to}`}); p.stock=to; return out({}); }
         case 'refund': {
-          if(this.db.tx.some(t=>t.payId===b.payId&&t.type==='환불')) throw new Error('이미 환불된 결제입니다');
-          const s=this.db.tx.filter(t=>t.payId===b.payId&&t.type==='판매');
+          if(!(b.items&&b.items.length) && this.db.tx.some(t=>t.payId===b.payId&&t.type==='환불')) throw new Error('이미 환불된 결제입니다');
+          let s=this.db.tx.filter(t=>t.payId===b.payId&&t.type==='판매');
+          if(b.items&&b.items.length){ const w={}; b.items.forEach(x=>w[x.code]=+x.qty); s=s.filter(x=>w[x.code]).map(x=>({...x,qty:-w[x.code],amount:x.price*w[x.code]})); }
           s.forEach(x=>{ if(m[x.code]) m[x.code].stock+=-x.qty;
             this.tx({payId:b.payId,type:'환불',code:x.code,name:x.name,qty:-x.qty,price:x.price,amount:-x.amount,method:x.method,staff:b.staff}); });
           return out({});
@@ -1300,7 +1312,7 @@ async function loadReport(){
     <details class="pay"><summary>
       <span class="grow ${p.refunded?'refunded':''}"><b>${esc(p.time.slice(11,16))}</b> · ${esc(p.method||'-')} · ${p.qty}개
         <span class="small muted">${esc(p.items.map(i=>i.name).join(', ')).slice(0,40)}</span></span>
-      <b class="${p.refunded?'refunded':''}">${won(p.amount)}</b>${p.refunded?'<span class="tag red">환불</span>':''}
+      <b class="${p.refunded?'refunded':''}">${won(p.amount)}</b>${p.refunded?'<span class="tag red">환불</span>':''}${p.partRefund?`<span class="tag">일부 환불·교환 ${p.partRefund}개</span>`:''}
     </summary>
     <div class="items">${p.items.map(i=>`${esc(i.name)} × ${i.qty} = ${won(i.amount)}`).join('<br>')}
       <div class="small" style="margin-top:6px">${esc(p.payId)}${p.staff?' · '+esc(p.staff):''}</div>
@@ -1724,6 +1736,7 @@ function renderRefList(){
       <div class="row" style="margin-top:6px;flex-wrap:wrap">
         ${['변심','불량','교환'].filter(x=>x!==k).map(x=>
           `<button class="btn sm${x==='교환'?' primary':''}" onclick="reclass(${i},'${x}')">${esc(KIND_TAG[x].split(' ')[0])} ${x}(으)로 바꾸기</button>`).join('')}
+        <button class="btn sm danger" onclick="cancelRef(${i})" title="잘못 누른 환불·교환을 없던 일로">❌ 잘못 누름 — 취소</button>
       </div>
       ${fixed(t) ? `<div class="small warnText" style="margin-top:4px">⚠️ 이 상품은 <b>${esc(r.date)}</b>에 실사·조정으로 재고를 이미 맞췄습니다 — 재고 체크는 <b>끈 채로</b> 바꾸세요. 켜면 같은 한 개가 두 번 빠집니다.</div>` : ''}
       ${t.memo?`<div class="small muted" style="margin-top:4px">${esc(t.memo)}</div>`:''}
@@ -2116,17 +2129,91 @@ async function delPay(payId){
   }catch(e){ toast('지우지 못했습니다: ' + e.message, true); }
 }
 
+// 결제 상세에서 환불 · 불량 · 교환 — 상품이 여러 개면 어떤 상품을 몇 개 처리할지 고릅니다
+let pickResolve = null;
+function pickDone(v){ $('pickModal').classList.remove('on'); const r = pickResolve; pickResolve = null; if(r) r(v); }
+function pickOk(){
+  const items = [...document.querySelectorAll('#pickList .pickRow')].map(row=>{
+    const on = row.querySelector('input[type=checkbox]').checked;
+    const q = Math.floor(Number(row.querySelector('input[type=number]').value)||0);
+    return on && q>0 ? {code:row.dataset.code, qty:Math.min(q, Number(row.dataset.max))} : null;
+  }).filter(Boolean);
+  if(!items.length){ $('pickErr').textContent = '처리할 상품을 하나 이상 골라 주세요'; $('pickErr').hidden = false; return; }
+  pickDone(items);
+}
+function pickItems(pay, reason){
+  const exch = reason==='교환', bad = reason==='불량';
+  // 같은 상품이 여러 줄이면 합칩니다
+  const agg = {};
+  pay.items.forEach(i=>{ const o = agg[i.code] || (agg[i.code] = {code:i.code, name:i.name, qty:0, amount:0}); o.qty += i.qty; o.amount += i.amount; });
+  const list = Object.values(agg);
+  $('pickTitle').textContent = exch ? '🔁 어떤 상품을 교환했나요?' : bad ? '⚠️ 어떤 상품이 불량인가요?' : '↩️ 어떤 상품을 환불하나요?';
+  $('pickWhat').innerHTML = `${esc(pay.time.slice(5,16))} 결제 · ${won(pay.amount)}<br>`
+    + (exch||bad ? '<b>실제로 바꿔 준(불량인) 상품만</b> 체크하세요. 나머지는 그대로 판매로 남습니다.' : '돌려받은 상품만 체크하세요.');
+  // 교환·불량은 기본으로 아무것도 체크하지 않습니다 (한 결제 전체가 교환으로 잡히는 실수 방지)
+  const pre = !(exch||bad);
+  $('pickList').innerHTML = list.map(i=>`<label class="row pickRow" data-code="${esc(i.code)}" data-max="${i.qty}"
+      style="align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer">
+      <input type="checkbox" ${pre?'checked':''} style="width:22px;height:22px">
+      <span class="grow">${esc(i.name)}<div class="small muted">${i.qty}개 · ${won(i.amount)}</div></span>
+      <input type="number" inputmode="numeric" min="1" max="${i.qty}" value="${i.qty}" style="width:70px" ${i.qty>1?'':'disabled'}
+        onclick="event.stopPropagation()" title="개수">
+    </label>`).join('');
+  $('pickErr').hidden = true;
+  $('pickOkBtn').textContent = exch ? '교환으로 처리' : bad ? '불량 환불로 처리' : '환불 처리';
+  $('pickModal').classList.add('on');
+  return new Promise(res=>{ pickResolve = res; });
+}
+
 async function refund(payId, reason){
   const bad = reason === '불량', exch = reason === '교환';
+  const pay = (reconData && reconData.payments || []).find(p=>p.payId===payId);
+  let items = null;
+  if(pay && pay.qty > 1){
+    items = await pickItems(pay, reason);
+    if(!items) return;
+  }
+  const what = items && pay ? items.map(x=>{ const i = pay.items.find(y=>y.code===x.code); return (i?i.name:x.code)+' ×'+x.qty; }).join(', ')
+    : pay ? pay.items.map(i=>i.name+' ×'+i.qty).join(', ') : payId;
   const msg = exch
-    ? `${payId} 결제를 교환으로 처리할까요?\n\n· 돈이 오가지 않았으므로 매출은 그대로입니다 (−0원)\n· 새로 내준 만큼 재고가 빠집니다\n· 받은 불량품은 불량 시트에 '교환'으로 쌓여, 팝업이 끝나면 업체에 청구합니다`
+    ? `교환으로 처리할까요?\n${what}\n\n· 돈이 오가지 않았으므로 매출은 그대로입니다 (−0원)\n· 새로 내준 만큼 재고가 빠집니다\n· 받은 불량품은 불량 시트에 '교환'으로 쌓여, 팝업이 끝나면 업체에 청구합니다`
     : bad
-    ? `${payId} 결제를 불량으로 환불할까요?\n\n· 돈은 돌려준 것으로 기록됩니다\n· 상품은 다시 팔 수 없으므로 재고로 돌아오지 않습니다\n· 불량 시트에 따로 쌓입니다`
-    : `${payId} 결제를 환불할까요?\n판매된 수량이 재고로 되돌아갑니다.`;
+    ? `불량으로 환불할까요?\n${what}\n\n· 돈은 돌려준 것으로 기록됩니다\n· 상품은 다시 팔 수 없으므로 재고로 돌아오지 않습니다\n· 불량 시트에 따로 쌓입니다`
+    : `환불할까요?\n${what}\n\n판매된 수량이 재고로 되돌아갑니다.`;
   if(!confirm(msg)) return;
-  await api('refund', {payId, reason: exch ? '교환' : bad ? '불량' : '변심', staff: cfg.staff||''});
+  const body = {payId, reason: exch ? '교환' : bad ? '불량' : '변심', staff: cfg.staff||''};
+  if(items) body.items = items;
+  await api('refund', body);
   toast(exch ? '교환으로 처리했습니다 (매출 그대로)' : bad ? '불량 환불로 처리했습니다 (재고 그대로)' : '환불 처리했습니다');
   loadReport(); refresh();
+}
+
+// 잘못 누른 환불·불량·교환 줄을 없던 일로 (재고·청구 목록·매출 모두 되돌림)
+async function cancelRef(i){
+  const r = reconData; if(!r) return;
+  const rows = (r.tx||[]).filter(t=>t.type==='환불'||t.type==='교환');
+  const t = rows[i]; if(!t) return;
+  const out = $('rxOut'); out.className = 'small';
+  const k = txKind(t), q = Math.abs(Number(t.qty)||0);
+  const m = /\[재고([+-]?\d+)\]/.exec(t.memo||'');
+  const eff = m ? Number(m[1]) : ({'변심':1,'불량':0,'교환':-1}[k])*q;
+  const stockLine = eff ? `· ${t.name} 재고 ${-eff>0?'+':''}${-eff} (그때 움직인 만큼 되돌림)` : '· 재고는 그대로입니다';
+  const moneyLine = t.amount ? `· 그날 매출이 ${won(-t.amount)} 되살아납니다` : '· 매출은 그대로입니다';
+  if(!confirm(`이 ${k} 기록을 없던 일로 할까요?\n\n${t.name||'(상품 미상)'} ×${q} · ${t.time.slice(5,16)}\n\n${stockLine}\n${moneyLine}\n· 업체 청구 목록(불량 시트)에서도 빠집니다\n\n잘못 누른 경우에만 쓰세요.`)) return;
+  const pin = await askPin(`${t.name} ${k} 기록을 취소합니다`);
+  if(pin === null) return;
+  out.textContent = '되돌리는 중…';
+  try{
+    const res = await api('cancelRefund', {date:r.date, rows:[{time:t.time, code:t.code}], delPin:pin, staff:cfg.staff||''},
+      {quiet:true, noApply:true, timeout:60000});
+    if(res.products){ state.products=res.products; state.serverProducts=JSON.parse(JSON.stringify(res.products));
+      state.todayTx=res.tx||state.todayTx; state.serverTx=res.tx||state.serverTx; outbox.forEach(applyOp); saveCache(); renderAll(); }
+    const c = res.undone[0]||{};
+    out.innerHTML = `✓ <b>${esc(c.name||t.name)} ${esc(k)}</b> 기록을 취소했습니다`
+      + (c.stockMove ? ` · 재고 ${c.stockMove>0?'+':''}${c.stockMove}` : ' · 재고 그대로')
+      + (res.revenueBack ? ` · 매출 ${won(res.revenueBack)} 되살림` : '');
+    await loadReport();
+  }catch(e){ out.className='small warnText'; out.textContent = '취소하지 못했습니다: ' + e.message; }
 }
 async function exportNow(){
   const date = $('repDate').value;
@@ -2246,7 +2333,7 @@ async function openCam(deviceId){
 }
 function stopCam(){ try{ camControls && camControls.stop(); }catch(_){} camControls = null; }
 function closeCam(){ stopCam(); $('camModal').classList.remove('on'); }
-document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('pinModal').classList.contains('on')) pinCancel(); if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
+document.addEventListener('keydown', e=>{ if(e.key!=='Escape') return; if($('pinModal').classList.contains('on')) pinCancel(); if($('pickModal').classList.contains('on')) pickDone(null); if($('camModal').classList.contains('on')) closeCam(); if($('closeModal').classList.contains('on')) hideClose(); });
 
 
 /* ============ 30초마다 구글 시트 깨우기 ============ */
