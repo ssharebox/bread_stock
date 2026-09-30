@@ -79,6 +79,13 @@ input[type=text],input[type=number],input[type=search],input[type=date],input[ty
 .seg button{flex:1;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px 6px;cursor:pointer}
 .seg button.on{border-color:var(--brand);background:var(--brand-soft);color:var(--brand);font-weight:700}
 #rcReasonSeg button{min-width:145px;font-size:13px}
+/* 정산표는 칸이 많아 좁은 화면에서 줄바꿈 대신 옆으로 밀리게 합니다 */
+#settleOut table{min-width:620px}
+#settleOut td:first-child,#settleOut th:first-child{white-space:nowrap}
+#settleOut h2{font-size:15px}
+a.btn{display:inline-block;text-decoration:none;text-align:center}
+#dailyTbl th:first-child,#dailyTbl td:first-child{position:sticky;left:0;background:var(--card,#fff);z-index:1}
+#dailySeg button{min-width:96px;font-size:13px}
 
 /* 재고 */
 .alert{border:1px solid var(--bad-line);background:var(--bad-bg);color:var(--bad);border-radius:12px;padding:10px 12px;margin-bottom:12px;font-weight:500}
@@ -403,8 +410,8 @@ ul.plain li{margin:5px 0;line-height:1.55}
       <p class="small muted" style="margin:0 0 10px">교환인데 그냥 <b>환불</b>로 넣어 둔 게 있으면 <b>🔁 교환</b>을 누르세요. 그 줄이 <b>0원</b>이 되어 매출이 되살아나고, <code>불량</code> 시트에 <b>구분 = 교환</b>으로 올라가 팝업이 끝나면 업체에 청구할 수 있습니다.</p>
       <div id="refList"></div>
       <label class="row" style="margin-top:10px;align-items:center;gap:8px">
-        <input type="checkbox" id="rxStock" checked style="width:auto">
-        <span class="small">재고도 차이만큼 맞추기 <span class="muted">(실사로 이미 맞춘 날짜면 체크를 끄세요)</span></span>
+        <input type="checkbox" id="rxStock" style="width:auto">
+        <span class="small" id="rxStockLbl">재고도 차이만큼 맞추기</span>
       </label>
       <div id="rxOut" class="small" style="margin-top:8px"></div>
     </div>
@@ -428,6 +435,17 @@ ul.plain li{margin:5px 0;line-height:1.55}
     </div>
     <button class="btn big" onclick="exportNow()">이 날짜를 지금 시트로 내보내기</button>
     <p class="small muted">매일 00시(00:00~01:00 사이)에 전날 내역이 날짜 이름의 새 시트로 자동 보관됩니다.</p>
+
+    <div class="card" id="settleCard" style="margin-top:18px">
+      <h2>📦 팝업 최종 정산 <span class="muted small">(마무리하는 날)</span></h2>
+      <p class="small muted" style="margin:0 0 10px">전 기간을 한 번에 훑어서 <b>입고·판매·남은 재고 검산</b>, <b>업체 청구(불량·교환)</b>, <b>반품할 재고</b>, <b>날짜별 매출</b>을 정리합니다.</p>
+      <div class="row" style="flex-wrap:wrap">
+        <button class="btn primary grow" onclick="loadSettle()">정산 불러오기</button>
+        <button class="btn" onclick="settleSheet()">📄 최종 자료 만들기 (PDF·엑셀)</button>
+      </div>
+      <div id="settleDl" class="row" style="margin-top:8px;flex-wrap:wrap" hidden></div>
+      <div id="settleOut" style="margin-top:12px"></div>
+    </div>
   </section>
 
   <!-- 설정 -->
@@ -1314,6 +1332,200 @@ async function loadReport(){
   $('prodSales').innerHTML = r.byProduct.filter(p=>p.qty||p.amount).map(p=>`<tr><td>${esc(p.name)}</td><td class="num">${p.qty}</td><td class="num">${won(p.amount)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="muted">판매 없음</td></tr>';
 }
+/* ============ 팝업 최종 정산 ============ */
+let settleData = null;
+
+async function loadSettle(){
+  const out = $('settleOut');
+  out.innerHTML = '<span class="muted small">전 기간을 훑는 중… 상품이 많으면 조금 걸립니다.</span>';
+  try{
+    const r = await api('settle', {}, {quiet:true, noApply:true, timeout:120000});
+    settleData = r; renderSettle();
+  }catch(e){ out.innerHTML = `<span class="small warnText">불러오지 못했습니다: ${esc(e.message)}</span>`; }
+}
+
+async function settleSheet(){
+  const out = $('settleOut');
+  const keep = out.innerHTML;
+  out.innerHTML = '<span class="muted small">최종 자료를 만드는 중… (구글시트에 <b>최종정산</b> 시트를 씁니다)</span>';
+  try{
+    const r = await api('settleSheet', {}, {quiet:true, noApply:true, timeout:120000});
+    settleData = r; renderSettle(); renderSettleDl();
+    toast('최종정산 시트를 만들었습니다 — 아래에서 PDF·엑셀로 받으세요');
+  }catch(e){ out.innerHTML = keep + `<div class="small warnText" style="margin-top:8px">만들지 못했습니다: ${esc(e.message)}</div>`; }
+}
+
+function renderSettleDl(){
+  const r = settleData; const box = $('settleDl');
+  if(!r || !r.pdfUrl){ box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `
+    <a class="btn primary" href="${esc(r.pdfUrl)}" target="_blank" rel="noopener">📄 PDF로 받기</a>
+    <a class="btn" href="${esc(r.xlsxUrl)}" target="_blank" rel="noopener">📊 엑셀(xlsx)로 받기</a>
+    <a class="btn" href="${esc(r.sheetUrl)}" target="_blank" rel="noopener">시트 열기</a>
+    <button class="btn" onclick="settleCsv()">CSV로 받기</button>
+    <span class="small muted" style="align-self:center">PDF·엑셀은 구글에 로그인된 상태에서 열립니다</span>`;
+}
+
+// 구글 로그인 없이도 되는 내려받기 — 화면에 있는 정산 내용을 그대로 CSV로
+function settleCsv(){
+  const r = settleData; if(!r) return;
+  const t = r.totals, q = v => `"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const L = [];
+  const put = (title, head, rows) => { L.push([title]); L.push(head); rows.forEach(x=>L.push(x)); L.push(['']); };
+  put(`팝업 최종 정산 ${r.from} ~ ${r.to}`,
+    ['총 매출','굿즈 매출','체험 매출','체험 인원','결제 건수','환불액','업체 청구','반품 재고 수량','반품 재고 정가'],
+    [[t.revenue,t.goodsAmount,t.ticketAmount,t.ticketQty,t.payments,t.refund,t.claimAmount,t.returnQty,t.returnValue]]);
+  put('① 입고·판매·남은 재고 검산',
+    ['코드','상품명','판매가','입고','판매','환불(변심)','불량','교환','조정','계산상 재고','전산 재고','차이'],
+    r.rows.map(x=>[x.code,x.name,x.price,x.received,x.soldQty,x.refundQty,x.defectQty,x.exchangeQty,x.adjust,x.expected,x.stock,x.gap]));
+  put('② 업체 청구 (불량·교환)', ['날짜','시각','코드','상품명','구분','수량','청구금액','메모'],
+    r.claims.map(c=>[c.date,c.time,c.code,c.name,c.kind,c.qty,c.amount,c.memo]));
+  put('③ 반품할 남은 재고', ['코드','상품명','판매가','반품 수량','정가 환산'],
+    r.rows.filter(x=>x.returnQty).map(x=>[x.code,x.name,x.price,x.returnQty,x.returnValue]));
+  put('④ 날짜별 매출·체험', ['날짜','결제 건수','굿즈 수량','굿즈 매출','체험 인원','체험 매출','환불','합계 매출'],
+    r.days.map(d=>[d.date,d.payments,d.goodsQty,d.goodsAmount,d.ticketQty,d.ticketAmount,d.refund,d.revenue]));
+  put('⑤ 날짜별 마감 재고', ['코드','상품명','시작'].concat(r.dates).concat(['현재']),
+    r.rows.map(x=>[x.code,x.name,x.openStock].concat(x.daily.map(c=>c.stock)).concat([x.stock])));
+  put('⑤-1 날짜별 판매 수량', ['코드','상품명'].concat(r.dates).concat(['합계']),
+    r.rows.map(x=>[x.code,x.name].concat(x.daily.map(c=>c.sold||0)).concat([x.soldQty])));
+  put('⑤-2 날짜별 판매 금액', ['코드','상품명'].concat(r.dates).concat(['합계']),
+    r.rows.map(x=>[x.code,x.name].concat(x.daily.map(c=>c.amount||0)).concat([x.soldAmount])));
+  const csv = '﻿' + L.map(row=>row.map(q).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = `브레드이발소_최종정산_${r.from}_${r.to}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+}
+
+function renderSettle(){
+  const r = settleData; if(!r) return;
+  const t = r.totals;
+  const kpi = (l,v,bad)=>`<div class="kpi ${bad?'bad':''}"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+  const gaps = r.rows.filter(x=>x.gap!==0);
+  const claims = r.rows.filter(x=>x.claimQty);
+  const rets = r.rows.filter(x=>x.returnQty);
+
+  $('settleOut').innerHTML = `
+    <div class="small muted" style="margin-bottom:8px">${esc(r.from)} ~ ${esc(r.to)} · 상품 ${t.products}종</div>
+    <div class="kpis">
+      ${kpi('총 매출', won(t.revenue))}
+      ${kpi('굿즈 매출', won(t.goodsAmount))}
+      ${kpi('체험 매출', `${won(t.ticketAmount)}<span class="muted small"> ${t.ticketQty}명</span>`)}
+      ${kpi('결제 건수', t.payments+'건')}
+      ${kpi('환불액', won(t.refund))}
+      ${kpi('업체 청구', `${won(t.claimAmount)}<span class="muted small"> ${t.claimQty}개</span>`)}
+      ${kpi('반품할 재고', `${t.returnQty}개<span class="muted small"> 정가 ${won(t.returnValue)}</span>`)}
+      ${kpi('검산 안 맞는 상품', t.gapCount+'개', t.gapCount)}
+    </div>
+
+    <h2 style="margin-top:18px">① 입고 · 판매 · 남은 재고 검산</h2>
+    ${gaps.length
+      ? `<div class="alert">계산이 안 맞는 상품이 <b>${gaps.length}개</b> 있습니다. 아래 빨간 줄을 확인하세요.</div>`
+      : `<p class="small" style="color:var(--ok,#137333)">✓ 모든 상품의 <b>입고 − 판매 + 환불 − 교환 ± 조정</b>이 전산 재고와 맞습니다.</p>`}
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>상품</th><th class="num">입고</th><th class="num">판매</th><th class="num">환불</th>
+        <th class="num">불량</th><th class="num">교환</th><th class="num">조정</th>
+        <th class="num">계산상</th><th class="num">전산</th><th class="num">차이</th></tr></thead>
+      <tbody>${r.rows.map(x=>`<tr${x.gap?' style="background:var(--bad-bg)"':''}>
+        <td>${esc(x.name)}</td><td class="num">${x.received}</td><td class="num">${x.soldQty}</td>
+        <td class="num">${x.refundQty||''}</td><td class="num">${x.defectQty||''}</td><td class="num">${x.exchangeQty||''}</td>
+        <td class="num">${x.adjust||''}</td><td class="num">${x.expected}</td><td class="num">${x.stock}</td>
+        <td class="num"${x.gap?' style="color:var(--bad);font-weight:700"':''}>${x.gap?(x.gap>0?'+':'')+x.gap:'0'}</td></tr>`).join('')}</tbody>
+    </table></div>
+
+    <h2 style="margin-top:18px">② 업체 청구 — 불량 · 교환</h2>
+    ${claims.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th>상품</th><th class="num">불량</th><th class="num">교환</th><th class="num">합계</th><th class="num">청구금액</th></tr></thead>
+      <tbody>${claims.map(x=>`<tr><td>${esc(x.name)}</td><td class="num">${x.defectQty||''}</td>
+        <td class="num">${x.exchangeQty||''}</td><td class="num">${x.claimQty}</td><td class="num">${won(x.claimAmount)}</td></tr>`).join('')}
+        <tr><td><b>합계</b></td><td class="num"><b>${t.defectQty}</b></td><td class="num"><b>${t.exchangeQty}</b></td>
+        <td class="num"><b>${t.claimQty}</b></td><td class="num"><b>${won(t.claimAmount)}</b></td></tr></tbody>
+    </table></div>
+    <details style="margin-top:8px"><summary class="small muted">건별로 보기 (${r.claims.length}건)</summary>
+      <div class="tbl-wrap" style="margin-top:6px"><table>
+        <thead><tr><th>날짜</th><th>상품</th><th>구분</th><th class="num">수량</th><th class="num">금액</th><th>메모</th></tr></thead>
+        <tbody>${r.claims.map(c=>`<tr><td class="small">${esc(c.date)} ${esc(c.time.slice(0,5))}</td><td>${esc(c.name)}</td>
+          <td><span class="tag ${c.kind==='교환'?'':'red'}">${esc(c.kind)}</span></td>
+          <td class="num">${c.qty}</td><td class="num">${won(c.amount)}</td><td class="small muted">${esc(c.memo||'')}</td></tr>`).join('')}</tbody>
+      </table></div></details>`
+      : '<p class="muted small">불량·교환 기록이 없습니다.</p>'}
+
+    <h2 style="margin-top:18px">③ 반품할 남은 재고</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>상품</th><th class="num">판매가</th><th class="num">반품 수량</th><th class="num">정가 환산</th></tr></thead>
+      <tbody>${rets.map(x=>`<tr><td>${esc(x.name)}</td><td class="num">${won(x.price)}</td>
+        <td class="num"><b>${x.returnQty}</b></td><td class="num">${won(x.returnValue)}</td></tr>`).join('')}
+        <tr><td><b>합계</b></td><td></td><td class="num"><b>${t.returnQty}개</b></td><td class="num"><b>${won(t.returnValue)}</b></td></tr></tbody>
+    </table></div>
+
+    <h2 style="margin-top:18px">④ 날짜별 매출 · 체험 티켓</h2>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>날짜</th><th class="num">결제</th><th class="num">굿즈 수량</th><th class="num">굿즈 매출</th>
+        <th class="num">체험 인원</th><th class="num">체험 매출</th><th class="num">환불</th><th class="num">합계</th></tr></thead>
+      <tbody>${r.days.map(d=>`<tr><td>${esc(d.date)}</td><td class="num">${d.payments||''}</td>
+        <td class="num">${d.goodsQty||''}</td><td class="num">${d.goodsAmount?won(d.goodsAmount):''}</td>
+        <td class="num">${d.ticketQty?d.ticketQty+'명':''}</td><td class="num">${d.ticketAmount?won(d.ticketAmount):''}</td>
+        <td class="num">${d.refund?won(-d.refund):''}</td><td class="num"><b>${won(d.revenue)}</b></td></tr>`).join('')}
+        <tr><td><b>합계</b></td><td class="num"><b>${t.payments}</b></td><td class="num"><b>${t.goodsQty}</b></td>
+        <td class="num"><b>${won(t.goodsAmount)}</b></td><td class="num"><b>${t.ticketQty}명</b></td>
+        <td class="num"><b>${won(t.ticketAmount)}</b></td><td class="num"><b>${t.refund?won(-t.refund):''}</b></td>
+        <td class="num"><b>${won(t.revenue)}</b></td></tr></tbody>
+    </table></div>
+
+    <h2 style="margin-top:18px">⑤ 날짜별 재고 확인</h2>
+    <div class="row" style="margin-bottom:8px;gap:6px;flex-wrap:wrap">
+      <div class="seg" id="dailySeg">
+        <button type="button" class="on" data-m="stock">📦 마감 재고</button>
+        <button type="button" data-m="sold">개수</button>
+        <button type="button" data-m="amount">금액</button>
+      </div>
+    </div>
+    ${t.dailyGapCount
+      ? `<div class="alert">마감 실사와 다른 칸이 <b>${t.dailyGapCount}개</b> 있습니다. 빨간 숫자 아래 괄호가 그날 실사 수량입니다.</div>`
+      : `<p class="small muted">마감 실사가 있는 날은 전부 계산과 일치합니다.</p>`}
+    <div class="tbl-wrap"><table id="dailyTbl">
+      <thead><tr><th>상품</th><th class="num" id="dailyFirstTh">시작</th>
+        ${r.dates.map(d=>`<th class="num">${esc(d.slice(5))}</th>`).join('')}
+        <th class="num" id="dailyLastTh">현재</th></tr></thead>
+      <tbody>${r.rows.map(x=>`<tr><td>${esc(x.name)}</td>
+        <td class="num muted dc" data-s="${x.openStock}" data-q="" data-a="" data-cnt="">${x.openStock}</td>
+        ${x.daily.map(c=>{
+          const bad = c.gap !== null && c.gap !== 0;
+          return `<td class="num dc" data-s="${c.stock}" data-q="${c.sold||''}" data-a="${c.amount||''}"
+            data-cnt="${c.counted===null?'':c.counted}"${bad?' style="color:var(--bad);font-weight:700"':''}>${c.stock}${bad?`<br><span class="small">(${c.counted})</span>`:''}</td>`;
+        }).join('')}
+        <td class="num dc" data-s="${x.stock}" data-q="${x.soldQty||''}" data-a="${x.soldAmount||''}" data-cnt=""><b>${x.stock}</b></td></tr>`).join('')}</tbody>
+    </table></div>
+    <p class="small muted" style="margin-top:6px">시작 = 첫날 열기 전 재고 · 각 칸 = 그날 문 닫을 때 재고. 괄호는 그날 마감 실사 수량입니다.</p>`;
+
+  document.querySelectorAll('#dailySeg button').forEach(b=>b.onclick=()=>setDailyMode(b.dataset.m));
+}
+
+// ⑤ 표를 마감재고 / 개수 / 금액으로 바꿔 보기
+function setDailyMode(m){
+  document.querySelectorAll('#dailySeg button').forEach(b=>b.classList.toggle('on', b.dataset.m===m));
+  const last = document.querySelector('#dailyTbl tbody tr td:last-child');
+  document.querySelectorAll('#dailyTbl td.dc').forEach(td=>{
+    const cnt = td.dataset.cnt, s = td.dataset.s, isEnd = td.cellIndex === td.parentNode.children.length-1;
+    td.style.color=''; td.style.fontWeight='';
+    if(m==='stock'){
+      const bad = cnt!=='' && Number(cnt)!==Number(s);
+      td.innerHTML = isEnd ? `<b>${s}</b>` : s + (bad?`<br><span class="small">(${cnt})</span>`:'');
+      if(bad){ td.style.color='var(--bad)'; td.style.fontWeight='700'; }
+    }else if(m==='sold'){
+      const v = td.dataset.q || '';
+      td.innerHTML = isEnd && v ? `<b>${v}</b>` : v;
+    }else{
+      const v = td.dataset.a ? won(Number(td.dataset.a)) : '';
+      td.innerHTML = isEnd && v ? `<b>${v}</b>` : v;
+    }
+  });
+  if($('dailyFirstTh')) $('dailyFirstTh').textContent = m==='stock' ? '시작' : '';
+  if($('dailyLastTh')) $('dailyLastTh').textContent = m==='stock' ? '현재' : '합계';
+}
+
 /* ============ 환불 · 교환 구분 바로잡기 ============ */
 // 이미 저장된 환불 줄이 어떤 구분이었는지 (서버의 txKind_ 와 같은 규칙)
 function txKind(t){
@@ -1344,9 +1556,24 @@ function renderRefList(){
         ${['변심','불량','교환'].filter(x=>x!==k).map(x=>
           `<button class="btn sm${x==='교환'?' primary':''}" onclick="reclass(${i},'${x}')">${esc(KIND_TAG[x].split(' ')[0])} ${x}(으)로 바꾸기</button>`).join('')}
       </div>
+      ${fixed(t) ? `<div class="small warnText" style="margin-top:4px">⚠️ 이 상품은 <b>${esc(r.date)}</b>에 실사·조정으로 재고를 이미 맞췄습니다 — 재고 체크는 <b>끈 채로</b> 바꾸세요. 켜면 같은 한 개가 두 번 빠집니다.</div>` : ''}
       ${t.memo?`<div class="small muted" style="margin-top:4px">${esc(t.memo)}</div>`:''}
     </div>`;
   }).join('');
+  // 지난 날짜는 이미 마감 실사로 맞춰져 있는 게 보통이라 재고 체크를 기본으로 끕니다
+  const today = r.date === kstDate();
+  const risky = rows.some(fixed);
+  $('rxStock').checked = today && !risky;
+  $('rxStockLbl').innerHTML = '재고도 차이만큼 맞추기 <span class="muted">'
+    + (risky ? '— 이 날짜는 실사·조정으로 이미 맞춰져 있습니다. 켜지 마세요.'
+      : today ? '(오늘 것이라 켜 두었습니다)'
+      : '(지난 날짜는 마감 실사로 이미 맞춰져 있어 기본으로 꺼 둡니다)') + '</span>';
+}
+// 그날 그 상품을 실사나 조정으로 손봤는지 — 손봤으면 재고를 또 건드리면 안 됩니다
+function fixed(t){
+  const r = reconData; if(!r) return false;
+  return ((r.tx||[]).some(x=>x.type==='조정' && x.code===t.code))
+      || ((r.counts||[]).some(c=>c.code===t.code));
 }
 
 async function reclass(i, to){
@@ -1355,9 +1582,16 @@ async function reclass(i, to){
   const t = rows[i]; if(!t) return;
   const out = $('rxOut'); out.className = 'small';
   const from = txKind(t);
-  const msg = to==='교환'
-    ? `이 줄을 교환으로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n· 금액이 0원이 되어 그날 매출이 ${won(Math.abs(t.amount))} 되살아납니다\n· 불량 시트에 구분 '교환'으로 올라갑니다 (업체 청구용)\n· 재고는 '${from}' → '교환' 차이만큼만 맞춥니다`
-    : `이 줄을 ${to}(으)로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n재고는 '${from}' → '${to}' 차이만큼만 맞춥니다.`;
+  const on = $('rxStock').checked;
+  const per = {'변심':1, '불량':0, '교환':-1};
+  const move = on ? (per[to] - per[from]) * Math.abs(Number(t.qty)||0) : 0;
+  const stockLine = !on ? '· 재고는 건드리지 않습니다'
+    : move ? `· ${t.name} 재고 ${move>0?'+':''}${move}` : '· 재고는 그대로입니다';
+  const warn = (on && move && fixed(t))
+    ? `\n\n⚠️ 잠깐 — ${t.name}은(는) ${r.date}에 실사·조정으로 재고를 이미 맞췄습니다.\n지금 재고를 또 ${move>0?'더하면':'빼면'} 같은 한 개가 두 번 반영됩니다.\n아래 '재고도 차이만큼 맞추기' 체크를 끄고 다시 누르세요.` : '';
+  const msg = (to==='교환'
+    ? `이 줄을 교환으로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n· 금액이 0원이 되어 그날 매출이 ${won(Math.abs(t.amount))} 되살아납니다\n· 불량 시트에 구분 '교환'으로 올라갑니다 (업체 청구용)\n${stockLine}`
+    : `이 줄을 ${to}(으)로 바꿀까요?\n\n${t.name||'(상품 미상)'} ${t.time.slice(11,16)}\n\n${stockLine}`) + warn;
   if(!confirm(msg)) return;
   const pin = await askPin(`환불 구분을 '${to}'(으)로 바꿉니다`);
   if(pin === null) return;
@@ -1628,7 +1862,9 @@ async function rcSave(){
           + (r.exchange ? `${won(r.claim||0)} <b>업체 청구</b> (매출 0원)` : won(-Math.abs(r.amount)))
           + (r.defect ? ' · <b>불량</b> (재고 그대로)'
             : r.exchange ? (r.stockMove ? ` · 재고 ${r.stockMove}` : ' · 재고 그대로')
-            : (r.stockMove > 0 ? ' · 재고 복원' : '')));
+            : (r.stockMove > 0 ? ' · 재고 복원' : ''))
+          + (r.claimHow === 'merged' || r.txHow === 'merged' ? ' · <b>겹쳐 있던 줄을 하나로 정리했습니다</b>'
+            : (r.claimHow === 'updated' || r.txHow === 'updated') ? ' · <b>같은 시각 기록을 덮어썼습니다</b>' : ''));
       }
       outbox.forEach(applyOp); saveCache(); renderAll();
       out.innerHTML = rcReason === '교환'
