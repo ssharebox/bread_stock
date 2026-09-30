@@ -443,7 +443,7 @@ ul.plain li{margin:5px 0;line-height:1.55}
   <section class="view" id="v-settle">
     <div class="card" id="settleCard" >
       <h2>📦 팝업 최종 정산 <span class="muted small">(마무리하는 날)</span></h2>
-      <p class="small muted" style="margin:0 0 10px">전 기간을 한 번에 훑어서 <b>입고·판매·남은 재고 검산</b>, <b>업체 청구(불량·교환)</b>, <b>반품할 재고</b>, <b>날짜별 매출</b>을 정리합니다.</p>
+      <p class="small muted" style="margin:0 0 10px">전 기간을 한 번에 훑어서 <b>입고·판매·남은 재고 검산</b>, <b>업체 청구(불량·교환)</b>, <b>반품할 재고</b>, <b>날짜별 매출</b>을 정리합니다. 맨 아래 <b>⑥ 원가</b>는 내부용으로 따로 펼쳐 봅니다.</p>
       <div class="row" style="flex-wrap:wrap">
         <button class="btn primary grow" onclick="loadSettle()">정산 불러오기</button>
         <button class="btn" onclick="settleSheet()">📄 최종 자료 만들기 (PDF·엑셀)</button>
@@ -1376,7 +1376,10 @@ function renderSettleDl(){
     <button class="btn" onclick="settleCsv()">CSV로 받기</button>
     ${vs.length ? `<div style="flex-basis:100%;margin-top:6px" class="small muted">업체별 PDF — 업체에 보낼 자료</div>
       <div class="row" style="flex-basis:100%;gap:6px;flex-wrap:wrap">${vs.map(v=>`<a class="btn sm" href="${esc(v.pdfUrl)}" target="_blank" rel="noopener">📄 ${esc(v.name)}</a>`).join('')}</div>` : ''}
-    <span class="small muted" style="flex-basis:100%">PDF·엑셀은 구글에 로그인된 상태에서 열립니다. 엑셀에는 최종정산과 업체별 시트가 모두 들어 있습니다.</span>`;
+    ${r.cost && r.cost.pdfUrl ? `<div style="flex-basis:100%;margin-top:6px" class="small muted">원가 정산 — <b>내부용</b> (업체에 보내지 마세요)</div>
+      <div class="row" style="flex-basis:100%;gap:6px;flex-wrap:wrap"><a class="btn sm" id="costPdf" href="${esc(r.cost.pdfUrl)}" target="_blank" rel="noopener">💰 원가정산 PDF</a>
+        <a class="btn sm" href="${esc(r.cost.sheetUrl)}" target="_blank" rel="noopener">원가정산 시트 열기</a></div>` : ''}
+    <span class="small muted" style="flex-basis:100%">PDF·엑셀은 구글에 로그인된 상태에서 열립니다. 엑셀은 구글시트 전체(원가 시트 포함)라 내부용이고, 업체에는 업체별 PDF를 보내세요.</span>`;
 }
 
 // 구글 로그인 없이도 되는 내려받기 — 화면에 있는 정산 내용을 그대로 CSV로
@@ -1581,9 +1584,92 @@ function renderSettle(){
     <p class="small muted" style="margin-top:6px">입고 = 첫날 들어온 수량 · 각 칸 = 그날 문 닫을 때 재고 (마감 실사가 있는 날은 실사 수량).</p>
     ${(!V && (r.noteGroups||[]).length) ? `<details style="margin-top:14px"><summary class="small muted">참고 — 기록 확인 사항 (재고 숫자엔 이미 반영됨)</summary>
       <ul class="small" style="margin:8px 0 0;padding-left:18px">${r.noteGroups.map(g=>`<li style="margin-bottom:6px">${esc(g.text)} — <b>${g.count}개</b>
-        <div class="muted">${esc(g.items.join(', '))}</div></li>`).join('')}</ul></details>` : ''}`;
+        <div class="muted">${esc(g.items.join(', '))}</div></li>`).join('')}</ul></details>` : ''}
+    ${costHtml(r, rows, V, vend)}`;
 
   document.querySelectorAll('#dailySeg button').forEach(b=>b.onclick=()=>setDailyMode(b.dataset.m));
+}
+
+/* ⑥ 원가 — 내부용. 기본은 접혀 있고, 누르면 펼칩니다 (매장 화면에 원가가 바로 보이지 않게) */
+let showCost = false;
+function toggleCost(){ showCost = !showCost; renderSettle(); if(showCost){ const el=$('costSec'); if(el) el.scrollIntoView({block:'start'}); } }
+function costHtml(r, rows, V, vend){
+  const T = r.totals;
+  if(T.costSold === undefined) return '';   // 예전 버전 서버
+  const pct = (m,b)=> b ? (Math.round(m/b*1000)/10)+'%' : '';
+  const src = V ? vend : {costSold:T.costSold, costReturn:T.costReturn, salesExVat:T.costSalesExVat, margin:T.margin,
+    costMissing:T.costMissing, costMissingSales:T.costMissingSales};
+  const salesBase = V ? rows.filter(x=>x.costSold!==null).reduce((a,x)=>a+x.salesExVat,0) : T.costSalesExVat;
+  const missing = rows.filter(x=>x.costSold===null && (x.netQty || x.returnQty));
+  const noCostYet = !(r.vendors||[]).some(v=>v.costSold) && !T.costSold;
+  const head = `<h2 id="costSec" style="margin-top:22px">⑥ 원가 · 지급 예정${V?' — '+esc(V):''} <span class="tag red">내부용</span></h2>`;
+  if(!showCost) return `${head}
+    <button class="btn" onclick="toggleCost()">💰 원가 보기</button>
+    <span class="small muted" style="margin-left:6px">업체에 보내는 PDF·시트에는 원가가 들어가지 않습니다.</span>`;
+  if(noCostYet) return `${head}
+    <button class="btn sm" onclick="toggleCost()">접기</button>
+    <p class="small muted">아직 원가가 들어 있지 않습니다. 구글시트의 <b>원가</b> 시트에 공급가(VAT 별도)를 넣은 뒤 다시 불러오세요.</p>`;
+  const kpi = (l,v,bad)=>`<div class="kpi ${bad?'bad':''}"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+  const vlist = (r.vendors||[]).filter(v=>(!V || v.name===V) && (v.costSold || v.costMissing));   // 원가 볼 게 없는 업체(주문 배송만)는 뺌
+  const vcol = !V;
+  return `${head}
+    <div class="row" style="gap:6px;margin-bottom:8px"><button class="btn sm" onclick="toggleCost()">접기</button>
+      <span class="small muted">원가 = 제안서 공급가 (VAT 별도) · 지급 예정 = 판매 원가 × 1.1</span></div>
+    <div class="kpis">
+      ${kpi('판매 원가 (VAT별도)', won(src.costSold))}
+      ${kpi('지급 예정 (VAT포함)', `<b>${won(Math.round(src.costSold*1.1))}</b><span class="muted small"> 부가세 ${won(Math.round(src.costSold*0.1))}</span>`)}
+      ${kpi('매출이익 (VAT별도)', `${won(src.margin)}<span class="muted small"> ${pct(src.margin, salesBase)}</span>`)}
+      ${kpi('반품 재고 원가', won(src.costReturn))}
+      ${kpi('원가 미정', src.costMissing ? `${src.costMissing}개<span class="muted small"> 매출 ${won(src.costMissingSales)}</span>` : '없음', src.costMissing)}
+    </div>
+    ${V ? '' : `<div class="tbl-wrap"><table id="costVendorTbl">
+      <thead><tr><th>업체</th><th class="num">순매출 (VAT별도)</th><th class="num">판매 원가</th><th class="num">지급 예정 (VAT포함)</th>
+        <th class="num">매출이익</th><th class="num">이익률</th><th class="num">반품 원가</th><th>원가 미정</th></tr></thead>
+      <tbody>${vlist.map(v=>`<tr onclick="pickVendor(${esc(JSON.stringify(v.name))})" style="cursor:pointer">
+        <td><b>${esc(v.name)}</b></td>${(!v.costSold && !v.salesExVat) ? '<td class="num muted" colspan="6">원가 없음</td>' : `<td class="num">${won(v.salesExVat)}</td><td class="num">${won(v.costSold)}</td>
+        <td class="num"><b>${won(Math.round(v.costSold*1.1))}</b></td><td class="num">${won(v.margin)}</td>
+        <td class="num">${pct(v.margin, v.salesExVat)}</td><td class="num">${won(v.costReturn)}</td>`}
+        <td>${v.costMissing?`<span class="tag red">${v.costMissing}개</span> <span class="small muted">매출 ${won(v.costMissingSales)}</span>`:''}</td></tr>`).join('')}
+        <tr><td><b>합계</b></td><td class="num"><b>${won(T.costSalesExVat)}</b></td><td class="num"><b>${won(T.costSold)}</b></td>
+          <td class="num"><b>${won(Math.round(T.costSold*1.1))}</b></td><td class="num"><b>${won(T.margin)}</b></td>
+          <td class="num"><b>${pct(T.margin, T.costSalesExVat)}</b></td><td class="num"><b>${won(T.costReturn)}</b></td>
+          <td>${T.costMissing?T.costMissing+'개':''}</td></tr></tbody>
+    </table></div>
+    <p class="small muted" style="margin:6px 0 12px">업체별 합계에는 원가가 있는 상품만 들어갑니다. 원가 미정 상품의 매출은 따로 표시했어요.</p>`}
+    <details${V?' open':''}><summary class="small">상품별 원가 (${rows.length}개)</summary>
+    <div class="tbl-wrap" style="margin-top:6px"><table id="costTbl">
+      <thead><tr>${vcol?'<th>업체</th>':''}<th>상품</th><th class="num">판매가</th><th class="num">원가</th><th class="num">원가율</th>
+        <th class="num">순판매</th><th class="num">판매 원가</th><th class="num">지급 예정</th><th class="num">매출이익</th><th class="num">반품 원가</th></tr></thead>
+      <tbody>${rows.map(x=>{ const has = x.costSold!==null; return `<tr${!has&&(x.netQty||x.returnQty)?' style="background:var(--bad-bg)"':''}>
+        ${vcol?`<td class="small muted">${esc(x.vendor)}</td>`:''}<td>${esc(x.name)}</td><td class="num">${won(x.price)}</td>
+        <td class="num">${has?won(x.cost):'<span class="small warnText">미정</span>'}</td>
+        <td class="num">${has&&x.price?pct(x.cost*1.1, x.price):''}</td><td class="num">${x.netQty||''}</td>
+        <td class="num">${has?won(x.costSold):''}</td><td class="num">${has?won(Math.round(x.costSold*1.1)):''}</td>
+        <td class="num">${has?won(x.margin):''}</td><td class="num">${has&&x.costReturn?won(x.costReturn):''}</td></tr>`; }).join('')}</tbody>
+    </table></div>
+    <p class="small muted" style="margin-top:6px">원가율 = 원가(VAT포함) ÷ 판매가 · 매출이익 = 순매출(VAT별도) − 판매 원가</p></details>
+    ${missing.length ? `<div class="card" style="margin-top:12px;padding:12px">
+      <b class="small">원가 미정 ${missing.length}개 — 공급가(VAT 별도)를 알면 넣어 주세요</b>
+      <div class="tbl-wrap" style="margin-top:6px"><table style="min-width:0">
+        <tbody>${missing.map(x=>`<tr><td>${esc(x.name)}<div class="small muted">${esc(x.vendor)} · 판매가 ${won(x.price)} · 순판매 ${x.netQty}개</div></td>
+          <td class="num"><input type="number" inputmode="numeric" min="0" class="costIn" data-code="${esc(x.code)}" placeholder="원가" style="width:110px"></td></tr>`).join('')}</tbody>
+      </table></div>
+      <button class="btn primary sm" style="margin-top:8px" onclick="saveCosts()">원가 저장</button>
+      <span class="small muted" style="margin-left:6px">비밀번호가 필요합니다 · 원가 시트에서 직접 고쳐도 됩니다</span>
+      <div id="costOut" class="small" style="margin-top:6px"></div></div>` : ''}`;
+}
+async function saveCosts(){
+  const rows = [...document.querySelectorAll('.costIn')].filter(i=>i.value!=='' && Number(i.value)>=0)
+    .map(i=>({code:i.dataset.code, cost:Number(i.value)}));
+  if(!rows.length){ $('costOut').textContent = '넣은 원가가 없습니다.'; return; }
+  const delPin = await askPin(`원가 ${rows.length}개를 원가 시트에 저장합니다. 재고·매출은 바뀌지 않습니다.`);
+  if(!delPin) return;
+  $('costOut').textContent = '저장 중…';
+  try{
+    const r = await api('setCosts', {rows, delPin, staff:cfg.staff||''}, {quiet:true, noApply:true, timeout:60000});
+    toast(`원가 ${r.changed}개를 저장했습니다`);
+    await loadSettle();
+  }catch(e){ $('costOut').innerHTML = `<span class="warnText">저장하지 못했습니다: ${esc(e.message)}</span>`; }
 }
 
 // ⑤ 표를 마감재고 / 개수 / 금액으로 바꿔 보기
