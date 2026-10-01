@@ -1428,6 +1428,182 @@ function settleCsv(){
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
 }
 
+
+/* ============ 엑셀로 받기 (업체별) — 화면 표 그대로 ============
+ * 시트 ① 재고 : 입고·판매·남은 재고 / 날짜별 마감 재고
+ * 시트 ② 굿즈 매출 : 품목 × 날짜 매출(원) · 판매 수량 · 합계
+ * 브라우저에서 바로 만들어서 구글 로그인 없이 받습니다.
+ */
+const XLSX_VENDOR_SLUG = {'세영코리아':'seyoung','클래키':'clacky','브레드이발소':'breadbarbershop','현미온미':'hyunmionmi',
+  '타고가요':'tagogayo','7321디자인':'7321design','업체 미지정':'unassigned'};
+function vendorSlug(v){
+  if(!v) return 'all';
+  if(XLSX_VENDOR_SLUG[v]) return XLSX_VENDOR_SLUG[v];
+  if(/^[\x20-\x7e]+$/.test(v)) return v.replace(/[^A-Za-z0-9_-]+/g,'-');
+  const i = ((settleData&&settleData.vendors)||[]).findIndex(x=>x.name===v);
+  return 'vendor' + (i+1);
+}
+function loadExcelJS(){
+  if(window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  return new Promise((res, rej)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
+    sc.onload = ()=> window.ExcelJS ? res(window.ExcelJS) : rej(new Error('ExcelJS 없음'));
+    sc.onerror = ()=> rej(new Error('ExcelJS를 불러오지 못했습니다'));
+    document.head.appendChild(sc);
+    setTimeout(()=>rej(new Error('ExcelJS 시간 초과')), 15000);
+  });
+}
+
+// 표 모양을 먼저 만들고(블록), 그다음 엑셀로 씁니다
+function settleBook(V){
+  const r = settleData;
+  const all = !V;
+  const vlist = (r.vendors||[]).map(v=>v.name);
+  const rowsOf = list => all ? vlist.flatMap(v=>list.filter(x=>x.vendor===v)) : list.filter(x=>x.vendor===V);
+  const rows = rowsOf(r.rows);
+  const stockRows = rows.filter(x=>!x.order);
+  const dates = r.dates || [];
+  const md = d => d.slice(5);
+  const vc = all ? ['업체'] : [];
+  const vv = x => all ? [x.vendor] : [];
+  const sum = (list,f) => list.reduce((a,x)=>a+(Number(f(x))||0),0);
+  const withSub = (list, rowFn, subFn) => {
+    if(!all) return list.map(x=>({cells:rowFn(x), red:x.gap?[]:null, x}));
+    const out = [];
+    vlist.forEach(v=>{ const mine = list.filter(x=>x.vendor===v); if(!mine.length) return;
+      mine.forEach(x=>out.push({cells:rowFn(x), x}));
+      out.push({cells:subFn(v, mine), sub:true}); });
+    return out;
+  };
+  const title = `브레드이발소 팝업 — ${all?'전체 업체':V}  (${r.from} ~ ${r.to})`;
+
+  // ① 입고 · 판매 · 남은 재고
+  const A = {
+    title: '입고 · 판매 · 남은 재고',
+    head: vc.concat(['상품','입고','판매','환불','불량','교환','조정','계산상','전산','차이']),
+    rows: withSub(rows, x=>vv(x).concat([x.name, x.order?'주문 배송':x.supply, x.soldQty, x.refundQty||'', x.defectQty||'',
+        x.exchangeQty||'', x.adjust||'', x.order?'':x.expected, x.order?'':x.stock, x.order?'':x.gap]),
+      (v, m)=>[v+' 소계', '', sum(m,x=>x.order?0:x.supply), sum(m,x=>x.soldQty), sum(m,x=>x.refundQty)||'', sum(m,x=>x.defectQty)||'',
+        sum(m,x=>x.exchangeQty)||'', sum(m,x=>x.adjust)||'', sum(m,x=>x.order?0:x.expected), sum(m,x=>x.order?0:x.stock), sum(m,x=>x.order?0:x.gap)]),
+    total: vc.map(()=> '').concat(['합계', sum(rows,x=>x.order?0:x.supply), sum(rows,x=>x.soldQty), sum(rows,x=>x.refundQty)||'',
+      sum(rows,x=>x.defectQty)||'', sum(rows,x=>x.exchangeQty)||'', sum(rows,x=>x.adjust)||'',
+      sum(rows,x=>x.order?0:x.expected), sum(rows,x=>x.order?0:x.stock), sum(rows,x=>x.order?0:x.gap)]),
+    gapCol: vc.length + 9,
+    note: '입고 = 첫날 들어온 수량 · 계산상 = 입고 − 판매 + 환불 − 교환 ± 조정 · 차이 = 기록으로 설명 안 되는 개수' + (rows.some(x=>x.order)?' · 주문 배송 상품은 매장에 업체 샘플만 있어 재고 계산에서 빠집니다':''),
+  };
+  if(all) A.total[0] = '전체';
+  // ② 날짜별 마감 재고
+  const B = {
+    title: '날짜별 마감 재고',
+    head: vc.concat(['상품','입고']).concat(dates.map(md)).concat(['현재']),
+    rows: stockRows.map(x=>({cells: vv(x).concat([x.name, x.supply]).concat(x.daily.map(c=>c.stock)).concat([x.stock]),
+      red: x.daily.map((c,i)=>c.gap ? vc.length+2+i : -1).filter(i=>i>=0), x})),
+    note: '각 칸 = 그날 문 닫을 때 재고 (마감 실사가 있는 날은 실사 수량). 빨간 숫자 = 기록과 실사가 다른 날',
+  };
+  // ③ 굿즈 매출 — 품목 × 날짜
+  const goodsRows = rows;   // 주문 배송(캐리어)도 매출에는 들어갑니다
+  const bagAmt = {}, bagQty = {};
+  if(all){
+    (r.days||[]).forEach(d=>{
+      const a = sum(goodsRows, x=>{ const c = x.daily.find(c=>c.date===d.date); return c?c.amount:0; });
+      const q = sum(goodsRows, x=>{ const c = x.daily.find(c=>c.date===d.date); return c?c.sold:0; });
+      bagAmt[d.date] = (d.goodsAmount||0) - a; bagQty[d.date] = (d.goodsQty||0) - q;
+    });
+  }
+  const hasBag = all && dates.some(d=>bagAmt[d]);
+  const matrix = (key, totalKey, ttl, unitNote) => {
+    const rowsM = withSub(goodsRows, x=>vv(x).concat([x.name]).concat(x.daily.map(c=>c[key]||'')).concat([x[totalKey]]),
+      (v, m)=>[v+' 소계', ''].concat(dates.map(d=>sum(m,x=>(x.daily.find(c=>c.date===d)||{})[key])||'')).concat([sum(m,x=>x[totalKey])]));
+    if(hasBag) rowsM.push({cells: vc.map(()=> '').concat(['봉투']).concat(dates.map(d=>(key==='amount'?bagAmt[d]:bagQty[d])||'')).concat([sum(dates,d=>key==='amount'?bagAmt[d]:bagQty[d])])});
+    const colTot = dates.map(d=>sum(goodsRows,x=>(x.daily.find(c=>c.date===d)||{})[key]) + (hasBag?((key==='amount'?bagAmt[d]:bagQty[d])||0):0));
+    const tot = vc.map(()=> '').concat([all?'굿즈존 합계':'합계']).concat(colTot).concat([sum(colTot,x=>x)]);
+    if(all) tot[0] = '전체';
+    return { title: ttl, head: vc.concat(['상품']).concat(dates.map(md)).concat(['합계']), rows: rowsM, total: tot, money: key==='amount', note: unitNote };
+  };
+  const C = matrix('amount', 'netAmount', '굿즈 매출 — 품목별 · 날짜별 (원)',
+    '매출 = 손님이 실제로 결제한 금액(VAT 포함, 할인가 그대로). 환불은 환불한 날 빠집니다. 교환은 매출 그대로입니다.');
+  const D = matrix('sold', 'netQty', '굿즈 판매 수량 — 품목별 · 날짜별 (개)',
+    '판매 수량 = 판매 − 환불(변심·불량). 합계 칸이 업체 정산 기준인 순판매 개수입니다.');
+  return { title, sheets: [ {name:'재고', blocks:[A, B]}, {name:'굿즈 매출', blocks:[C, D]} ] };
+}
+
+async function settleXlsx(V){
+  const r = settleData; if(!r) return;
+  const book = settleBook(V);
+  const fname = `bread-${vendorSlug(V)}_${r.from||''}_${r.to||''}.xlsx`;
+  let blob;
+  try{
+    const EJ = await loadExcelJS();
+    const wb = new EJ.Workbook();
+    const thin = {style:'thin', color:{argb:'FFBFB6A8'}};
+    const border = {top:thin, left:thin, bottom:thin, right:thin};
+    book.sheets.forEach(sd=>{
+      const ws = wb.addWorksheet(sd.name, {pageSetup:{orientation:'landscape', paperSize:9, fitToPage:true, fitToWidth:1, fitToHeight:0,
+        margins:{left:0.3,right:0.3,top:0.4,bottom:0.4,header:0.2,footer:0.2}}});
+      let row = 1, width = 0;
+      const t = ws.getCell(row,1); t.value = book.title; t.font = {bold:true, size:14}; row += 2;
+      sd.blocks.forEach(b=>{
+        width = Math.max(width, b.head.length);
+        const bt = ws.getCell(row,1); bt.value = b.title; bt.font = {bold:true, size:12}; row++;
+        const hr = ws.getRow(row);
+        b.head.forEach((h,i)=>{ const c = hr.getCell(i+1); c.value = h; c.font = {bold:true}; c.border = border;
+          c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:'FFF3EDE4'}}; c.alignment = {horizontal: i <= b.head.indexOf('상품') ? 'left':'center', vertical:'middle'}; });
+        row++;
+        const put = (cells, opt) => {
+          const rr = ws.getRow(row);
+          cells.forEach((v,i)=>{ const c = rr.getCell(i+1); c.value = (v===''||v===null||v===undefined) ? null : v; c.border = border;
+            if(typeof v === 'number') { c.numFmt = '#,##0'; c.alignment = {horizontal:'right'}; }
+            if(opt.bold) c.font = {bold:true};
+            if(opt.fill) c.fill = {type:'pattern', pattern:'solid', fgColor:{argb:opt.fill}};
+            if(opt.red && opt.red.includes(i)) c.font = {bold:true, color:{argb:'FFB42318'}};
+          });
+          row++;
+        };
+        b.rows.forEach(x=>{
+          const red = (x.red||[]).slice();
+          if(b.gapCol!==undefined && typeof x.cells[b.gapCol]==='number' && x.cells[b.gapCol]) red.push(b.gapCol);
+          put(x.cells, {bold:x.sub, fill:x.sub?'FFFFF6EC':null, red});
+        });
+        if(b.total) put(b.total, {bold:true, fill:'FFF3EDE4'});
+        if(b.note){ const n = ws.getCell(row,1); n.value = b.note; n.font = {size:9, color:{argb:'FF7A6F62'}}; row++; }
+        row += 2;
+      });
+      // 칸 너비: 업체 · 상품은 넓게, 숫자는 좁게
+      const first = book.sheets[0].blocks[0].head[0]==='업체';
+      for(let i=1;i<=width;i++){
+        ws.getColumn(i).width = (first && i===1) ? 14 : (i===(first?2:1)) ? 30 : 10;
+      }
+    });
+    blob = new Blob([await wb.xlsx.writeBuffer()], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }catch(e){
+    // ExcelJS를 못 불러오면 꾸밈 없이 같은 표로 (이미 있는 SheetJS 사용)
+    if(!window.XLSX) { toast('엑셀을 만들지 못했습니다: ' + e.message, true); return; }
+    const wb = XLSX.utils.book_new();
+    book.sheets.forEach(sd=>{
+      const aoa = [[book.title], []];
+      sd.blocks.forEach(b=>{ aoa.push([b.title]); aoa.push(b.head); b.rows.forEach(x=>aoa.push(x.cells)); if(b.total) aoa.push(b.total); if(b.note) aoa.push([b.note]); aoa.push([]); aoa.push([]); });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sd.name);
+    });
+    blob = new Blob([XLSX.write(wb, {bookType:'xlsx', type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  toast(`${V||'전체'} 엑셀을 받았습니다`);
+}
+function xlsxBar(V){
+  const vs = (settleData && settleData.vendors) || [];
+  return `<div class="card" style="padding:12px;margin:0 0 14px;background:var(--brand-soft)">
+    <b class="small">📊 엑셀로 받기 — 재고 표 2개 + 굿즈 매출(품목별·날짜별·합계)</b>
+    <div class="row" id="xlsxBar" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+      <button class="btn sm${!V?' primary':''}" onclick="settleXlsx(null)">전체</button>
+      ${vs.map(v=>`<button class="btn sm${v.name===V?' primary':''}" onclick='settleXlsx(${esc(JSON.stringify(v.name))})'>${esc(v.name)}</button>`).join('')}
+    </div>
+    <div class="small muted" style="margin-top:6px">원가는 들어가지 않습니다 · 구글 로그인 없이 바로 받아집니다</div></div>`;
+}
+
 let settleVendor = null;   // null = 전체, 아니면 업체명
 function pickVendor(v){ settleVendor = (v===settleVendor) ? null : v; renderSettle(); renderSettleDl();
   const el = document.getElementById('vendorBar'); if(el) el.scrollIntoView({block:'nearest'}); }
@@ -1464,6 +1640,7 @@ function renderSettle(){
 
   $('settleOut').innerHTML = `
     <div class="small muted" style="margin-bottom:8px">${esc(r.from)} ~ ${esc(r.to)} · 상품 ${T.products}종 · 업체 ${(r.vendors||[]).length}곳</div>
+    ${xlsxBar(V)}
 
     <h2>⓪ 업체별 요약 <span class="muted small">(누르면 그 업체만 봅니다)</span></h2>
     <div class="tbl-wrap"><table id="vendorTbl">
