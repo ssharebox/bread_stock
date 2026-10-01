@@ -1513,18 +1513,27 @@ function settleBook(V){
   }
   const hasBag = all && dates.some(d=>bagAmt[d]);
   const matrix = (key, totalKey, ttl, unitNote) => {
-    const rowsM = withSub(goodsRows, x=>vv(x).concat([x.name]).concat(x.daily.map(c=>c[key]||'')).concat([x[totalKey]]),
-      (v, m)=>[v+' 소계', ''].concat(dates.map(d=>sum(m,x=>(x.daily.find(c=>c.date===d)||{})[key])||'')).concat([sum(m,x=>x[totalKey])]));
-    if(hasBag) rowsM.push({cells: vc.map(()=> '').concat(['봉투']).concat(dates.map(d=>(key==='amount'?bagAmt[d]:bagQty[d])||'')).concat([sum(dates,d=>key==='amount'?bagAmt[d]:bagQty[d])])});
-    const colTot = dates.map(d=>sum(goodsRows,x=>(x.daily.find(c=>c.date===d)||{})[key]) + (hasBag?((key==='amount'?bagAmt[d]:bagQty[d])||0):0));
-    const tot = vc.map(()=> '').concat([all?'굿즈존 합계':'합계']).concat(colTot).concat([sum(colTot,x=>x)]);
+    const qty = key === 'sold';          // 수량 표에는 '합계 금액' 칸과 '날짜별 금액' 줄을 덧붙입니다
+    const at = (x, d, k) => (x.daily.find(c=>c.date===d)||{})[k] || 0;
+    const bag = (d, k) => (k==='amount'?bagAmt[d]:bagQty[d]) || 0;
+    const rowsM = withSub(goodsRows, x=>vv(x).concat([x.name]).concat(x.daily.map(c=>c[key]||'')).concat([x[totalKey]]).concat(qty?[x.netAmount]:[]),
+      (v, m)=>[v+' 소계', ''].concat(dates.map(d=>sum(m,x=>at(x,d,key))||'')).concat([sum(m,x=>x[totalKey])]).concat(qty?[sum(m,x=>x.netAmount)]:[]));
+    if(hasBag) rowsM.push({cells: vc.map(()=> '').concat(['봉투']).concat(dates.map(d=>bag(d,key)||'')).concat([sum(dates,d=>bag(d,key))])
+      .concat(qty?[sum(dates,d=>bag(d,'amount'))]:[])});
+    const colTot = k => dates.map(d=>sum(goodsRows,x=>at(x,d,k)) + (hasBag?bag(d,k):0));
+    const cq = colTot(key), ca = colTot('amount');
+    const lbl = all ? '굿즈존 합계' : '합계';
+    const tot = vc.map(()=> '').concat([qty ? lbl+' (개)' : lbl]).concat(cq).concat([sum(cq,x=>x)]).concat(qty?[sum(ca,x=>x)]:[]);
     if(all) tot[0] = '전체';
-    return { title: ttl, head: vc.concat(['상품']).concat(dates.map(md)).concat(['합계']), rows: rowsM, total: tot, money: key==='amount', note: unitNote };
+    const extra = qty ? [vc.map(()=> '').concat([lbl+' (원)']).concat(ca).concat(['', sum(ca,x=>x)])] : [];
+    if(all && qty) extra[0][0] = '전체';
+    return { title: ttl, head: vc.concat(['상품']).concat(dates.map(md)).concat(qty?['합계 (개)','합계 금액 (원)']:['합계']),
+      rows: rowsM, total: tot, extraTotals: extra, money: key==='amount', note: unitNote };
   };
   const C = matrix('amount', 'netAmount', '굿즈 매출 — 품목별 · 날짜별 (원)',
     '매출 = 손님이 실제로 결제한 금액(VAT 포함, 할인가 그대로). 환불은 환불한 날 빠집니다. 교환은 매출 그대로입니다.');
   const D = matrix('sold', 'netQty', '굿즈 판매 수량 — 품목별 · 날짜별 (개)',
-    '판매 수량 = 판매 − 환불(변심·불량). 합계 칸이 업체 정산 기준인 순판매 개수입니다.');
+    '판매 수량 = 판매 − 환불(변심·불량). 합계 (개) = 업체 정산 기준인 순판매 개수, 합계 금액 = 그 개수의 실제 결제 금액 · 맨 아래 줄 = 날짜별 매출 합계');
   return { title, sheets: [ {name:'재고', blocks:[A, B]}, {name:'굿즈 매출', blocks:[C, D]} ] };
 }
 
@@ -1566,6 +1575,7 @@ async function settleXlsx(V){
           put(x.cells, {bold:x.sub, fill:x.sub?'FFFFF6EC':null, red});
         });
         if(b.total) put(b.total, {bold:true, fill:'FFF3EDE4'});
+        (b.extraTotals||[]).forEach(t=>put(t, {bold:true, fill:'FFF3EDE4'}));
         if(b.note){ const n = ws.getCell(row,1); n.value = b.note; n.font = {size:9, color:{argb:'FF7A6F62'}}; row++; }
         row += 2;
       });
@@ -1574,6 +1584,7 @@ async function settleXlsx(V){
       for(let i=1;i<=width;i++){
         ws.getColumn(i).width = (first && i===1) ? 14 : (i===(first?2:1)) ? 30 : 10;
       }
+      sd.blocks.forEach(b=>b.head.forEach((h,i)=>{ if(/금액/.test(h)) ws.getColumn(i+1).width = 15; }));
     });
     blob = new Blob([await wb.xlsx.writeBuffer()], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
   }catch(e){
@@ -1582,7 +1593,7 @@ async function settleXlsx(V){
     const wb = XLSX.utils.book_new();
     book.sheets.forEach(sd=>{
       const aoa = [[book.title], []];
-      sd.blocks.forEach(b=>{ aoa.push([b.title]); aoa.push(b.head); b.rows.forEach(x=>aoa.push(x.cells)); if(b.total) aoa.push(b.total); if(b.note) aoa.push([b.note]); aoa.push([]); aoa.push([]); });
+      sd.blocks.forEach(b=>{ aoa.push([b.title]); aoa.push(b.head); b.rows.forEach(x=>aoa.push(x.cells)); if(b.total) aoa.push(b.total); (b.extraTotals||[]).forEach(t=>aoa.push(t)); if(b.note) aoa.push([b.note]); aoa.push([]); aoa.push([]); });
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), sd.name);
     });
     blob = new Blob([XLSX.write(wb, {bookType:'xlsx', type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
